@@ -92,3 +92,54 @@ async def ws_debug(ws: WebSocket):
     finally:
         task.cancel()
         hub.unsubscribe(q)
+
+
+@router.websocket("/ws/stt-test")
+async def ws_stt_test(ws: WebSocket):
+    """Setup-check helper: mic audio in, live transcripts + wake-phrase detection out (no deck, no LLM)."""
+    from ..stt.deepgram import DeepgramSTT
+    from .barge_in import ALL_TRIGGERS, WAKE_TRIGGERS, find_trigger
+
+    await ws.accept()
+    settings = ws.app.state.svc.settings
+    out: asyncio.Queue = asyncio.Queue()
+
+    async def on_event(ev):
+        if ev.kind == "transcript":
+            m = find_trigger(ev.text)
+            await out.put({"type": "transcript", "text": ev.text, "is_final": ev.is_final, "confidence": ev.confidence,
+                           "trigger": m.trigger if m else None, "wake": bool(m and m.trigger in WAKE_TRIGGERS)})
+
+    if not settings.use_real_stt:
+        await ws.send_text(json.dumps({"type": "mock", "message": "No DEEPGRAM_API_KEY: speech recognition is mocked."}))
+        await ws.close()
+        return
+    stt = DeepgramSTT(settings, on_event, ALL_TRIGGERS, **({"base_url": settings.deepgram_ws_base} if settings.deepgram_ws_base else {}))
+    await stt.start()
+
+    async def pump():
+        last = None
+        while True:
+            try:
+                item = await asyncio.wait_for(out.get(), 1.0)
+                await ws.send_text(json.dumps(item))
+            except asyncio.TimeoutError:
+                pass
+            st = (stt.status, stt.last_error)
+            if st != last:
+                last = st
+                await ws.send_text(json.dumps({"type": "status", "status": stt.status, "error": stt.last_error}))
+
+    task = asyncio.create_task(pump())
+    try:
+        while True:
+            packet = await ws.receive()
+            if packet["type"] == "websocket.disconnect":
+                break
+            if packet.get("bytes") is not None:
+                await stt.send_audio(packet["bytes"])
+    except WebSocketDisconnect:
+        pass
+    finally:
+        task.cancel()
+        await stt.close()

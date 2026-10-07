@@ -323,3 +323,26 @@ async def test_interrupt_is_off_when_barge_in_is_off(svc, deck):
     await asyncio.sleep(0.4)
     assert c.session.state.value == "ANSWERING"
     await c.close()
+
+
+async def test_speech_final_with_a_finished_sentence_answers_without_waiting_for_utterance_end(svc, deck):
+    c = await presenting(svc, deck)
+    await c.session.handle(M.HandRaise())
+    await c.wait_state("LISTENING")
+    # endpointer fired (speech_final) and the text is a complete question; no UtteranceEnd is ever sent
+    await c.session.handle(M.SimTranscript(text="how much is the growth plan per month?", is_final=True, speech_final=True))
+    info = await c.wait_for(lambda: c.of("model_info") and c.of("model_info")[-1], timeout=5)
+    assert info["question"] == "how much is the growth plan per month?"
+    await c.close()
+
+
+async def test_speech_final_without_sentence_end_keeps_waiting(svc, deck):
+    c = await presenting(svc, deck)
+    await c.session.handle(M.HandRaise())
+    await c.wait_state("LISTENING")
+    await c.session.handle(M.SimTranscript(text="how much is the growth plan", is_final=True, speech_final=True))
+    await asyncio.sleep(0.5)
+    assert not c.of("model_info")  # no terminal punctuation: the speaker may still be going, wait for UtteranceEnd
+    await c.sim("per month", final=True, end=True)
+    await c.wait_for(lambda: c.of("model_info"))
+    await c.close()

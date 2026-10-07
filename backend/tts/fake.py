@@ -20,5 +20,5 @@ class FakeTTS:
     def __init__(self, speed: float = 1.0):
         self.speed = speed  # >1 shortens the silent clips (tests)
 
-    async def synth(self, text: str) -> bytes:
+    async def synth(self, text: str, previous: str = "", next: str = "") -> bytes:
         return silent_mp3(estimate_seconds(text) / self.speed)

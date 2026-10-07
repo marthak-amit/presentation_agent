@@ -97,3 +97,5 @@ textarea { width:100%; background:var(--bg); color:var(--fg); border:1px solid v
 .slide-edit.saved { border-color:#2f6b4a; }
 .chip { font-size:12px; padding:3px 10px; border-radius:999px; }
 @media (max-width:760px){ .slide-edit{ grid-template-columns:1fr; } }
+
+.good { color:var(--good); font-weight:600; }

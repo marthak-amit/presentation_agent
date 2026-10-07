@@ -83,8 +83,29 @@ export default function Presenter() {
         default:
       }
     };
+    let talking = false;
+    const down = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if ((e.key === "t" || e.key === "T") && !e.repeat && !talking && !e.metaKey && !e.ctrlKey) {
+        talking = true;
+        client.ptt(true);
+      }
+    };
+    const up = (e: KeyboardEvent) => {
+      if ((e.key === "t" || e.key === "T") && talking) {
+        talking = false;
+        client.ptt(false);
+      }
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
   }, [client, toggleFullscreen]);
 
   if (err) return <main className="page error">{err}</main>;
@@ -198,8 +219,9 @@ export default function Presenter() {
           <input type="checkbox" checked={snap.bargeIn} onChange={(e) => client.setBargeIn(e.target.checked)} data-testid="bargein" />
           Voice barge-in {snap.bargeIn ? "ON" : "OFF (push-to-talk only)"}
         </label>
-        {!snap.bargeIn && (
+        {(
           <button
+            title="Hold (or hold the T key) while you speak - works even in a noisy room"
             onMouseDown={() => client.ptt(true)}
             onMouseUp={() => client.ptt(false)}
             onMouseLeave={() => snap.state === "LISTENING" && client.ptt(false)}
@@ -223,7 +245,7 @@ export default function Presenter() {
           After <b>“Okay Agent”</b>: ask anything · “next slide” · “previous slide” · “go to slide 3” · “pause” · “continue” · “repeat this slide” · “start over”.
           While it answers: say “Okay Agent”, “wait” or “stop” to cut in.
         </p>
-        <p className="muted">Keys: <kbd>Space</kbd> pause/resume · <kbd>←</kbd>/<kbd>→</kbd> slides · <kbd>F</kbd> full screen · <kbd>M</kbd> mic · <kbd>B</kbd> voice commands on/off</p>
+        <p className="muted">Keys: <kbd>Space</kbd> pause/resume · <kbd>←</kbd>/<kbd>→</kbd> slides · <kbd>F</kbd> full screen · <kbd>M</kbd> mic · <kbd>B</kbd> voice commands on/off · hold <kbd>T</kbd> to talk (push-to-talk)</p>
       </details>
       {snap.micError && <p className="error">{snap.micError}</p>}
       {snap.error && <p className="error">{snap.error}</p>}

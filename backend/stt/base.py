@@ -10,6 +10,7 @@ class STTEvent:
     text: str = ""
     is_final: bool = False
     confidence: float = 1.0
+    speech_final: bool = False  # Deepgram's endpointing decided the speaker stopped (earlier than UtteranceEnd)
 
 
 OnSTTEvent = Callable[[STTEvent], Awaitable[None]]

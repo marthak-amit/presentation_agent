@@ -23,7 +23,10 @@ def test_url_has_required_deepgram_params(settings):
 def test_parse_messages():
     r = parse_message(json.dumps({"type": "Results", "is_final": True, "channel": {"alternatives": [
         {"transcript": " I have a question ", "confidence": 0.93}]}}))
-    assert r == STTEvent("transcript", "I have a question", True, 0.93)
+    assert r == STTEvent("transcript", "I have a question", True, 0.93, False)
+    r2 = parse_message(json.dumps({"type": "Results", "is_final": True, "speech_final": True, "channel": {"alternatives": [
+        {"transcript": "Hello.", "confidence": 0.9}]}}))
+    assert r2.speech_final is True
     assert parse_message(json.dumps({"type": "Results", "channel": {"alternatives": [{"transcript": ""}]}})) is None
     assert parse_message('{"type":"UtteranceEnd"}').kind == "utterance_end"
     assert parse_message("not json") is None
@@ -134,3 +137,51 @@ async def test_deepgram_bad_key_is_reported(settings):
             await asyncio.sleep(0.05)
         assert stt.status == "down" and "API key" in (stt.last_error or "")
         await stt.close()
+
+
+def test_stt_test_socket_reports_mock_without_key(svc):
+    from fastapi.testclient import TestClient
+
+    from backend.main import create_app
+
+    with TestClient(create_app(svc)) as http, http.websocket_connect("/ws/stt-test") as ws:
+        assert ws.receive_json()["type"] == "mock"
+
+
+async def test_stt_test_socket_detects_the_wake_phrase_live(svc):
+    """Mic bytes in -> Deepgram (local fake) -> transcripts with wake-phrase detection out."""
+    import threading
+    from dataclasses import replace
+
+    from fastapi.testclient import TestClient
+
+    from backend.main import create_app
+
+    async def handler(ws):
+        async for msg in ws:
+            if isinstance(msg, bytes):
+                await ws.send(json.dumps({"type": "Results", "is_final": False, "channel": {"alternatives": [
+                    {"transcript": "Okay, Agent", "confidence": 0.95}]}}))
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        svc.settings = replace(svc.settings, deepgram_api_key="k", deepgram_ws_base=f"ws://127.0.0.1:{port}/v1/listen")
+
+        def client_side(result):
+            with TestClient(create_app(svc)) as http, http.websocket_connect("/ws/stt-test") as ws:
+                ws.send_bytes(b"\x01\x00" * 1600)
+                for _ in range(20):
+                    m = ws.receive_json()
+                    if m["type"] == "transcript":
+                        result.append(m)
+                        break
+
+        out: list = []
+        t = threading.Thread(target=client_side, args=(out,))
+        t.start()
+        for _ in range(100):
+            await asyncio.sleep(0.1)
+            if not t.is_alive():
+                break
+        t.join(timeout=5)
+        assert out and out[0]["wake"] is True and out[0]["trigger"] in ("okay agent", "ok agent")

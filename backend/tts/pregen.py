@@ -14,18 +14,20 @@ CONCURRENCY = 2  # ElevenLabs free tier allows ~2-3 parallel requests
 async def pregenerate_deck_audio(svc: Services, deck_id: str) -> None:
     store, cache = svc.store, svc.audio
     narration = store.narration(deck_id)
-    jobs = [(s["n"], i, text) for s in narration for i, text in enumerate(s["sentences"])]
+    flat = [(s["n"], i, text) for s in narration for i, text in enumerate(s["sentences"])]
+    jobs = [(n, i, text, flat[k - 1][2] if k else "", flat[k + 1][2] if k + 1 < len(flat) else "")
+            for k, (n, i, text) in enumerate(flat)]
     store.update_meta(deck_id, audio={"done": 0, "total": len(jobs)})
     await ensure_all_clips(cache, svc.settings.stock_dir, svc.settings.presenter_name)
     sem = asyncio.Semaphore(CONCURRENCY)
     done = 0
     fake = 0
 
-    async def one(n: int, i: int, text: str):
+    async def one(n: int, i: int, text: str, prev: str, nxt: str):
         nonlocal done, fake
         async with sem:
             try:
-                _, provider = await cache.ensure(store.audio_path(deck_id, n, i), text)
+                _, provider = await cache.ensure(store.audio_path(deck_id, n, i), text, prev, nxt)
                 if provider == "fake" and svc.tts.real:
                     fake += 1  # a real voice is configured but this sentence fell back to silent mock audio
             except Exception as e:  # never fail the whole deck on one sentence

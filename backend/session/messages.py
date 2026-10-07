@@ -56,6 +56,7 @@ class SimTranscript(_Msg):
     is_final: bool = True
     confidence: float = 0.95
     utterance_end: bool = False
+    speech_final: bool = False
 
 
 class Ping(_Msg):

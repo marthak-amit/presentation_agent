@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { startMic, MicHandle } from "../audio/mic";
 
 interface CheckRow {
   id: string;
@@ -26,6 +27,11 @@ export default function Check() {
   const [peak, setPeak] = useState(0);
   const [playing, setPlaying] = useState(false);
   const stopMic = useRef<(() => void) | null>(null);
+  const [sttOn, setSttOn] = useState(false);
+  const [sttHeard, setSttHeard] = useState<{ text: string; final: boolean; wake: boolean } | null>(null);
+  const [sttWake, setSttWake] = useState(false);
+  const [sttMsg, setSttMsg] = useState("");
+  const sttRef = useRef<{ ws: WebSocket; mic: MicHandle | null } | null>(null);
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -43,8 +49,51 @@ export default function Check() {
 
   useEffect(() => {
     void run();
-    return () => stopMic.current?.();
+    return () => {
+      stopMic.current?.();
+      sttRef.current?.mic?.stop();
+      sttRef.current?.ws.close();
+    };
   }, [run]);
+
+  async function toggleStt() {
+    if (sttOn && sttRef.current) {
+      sttRef.current.mic?.stop();
+      sttRef.current.ws.close();
+      sttRef.current = null;
+      setSttOn(false);
+      return;
+    }
+    setSttHeard(null);
+    setSttWake(false);
+    setSttMsg("Connecting…");
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${proto}://${location.host}/ws/stt-test`);
+    ws.binaryType = "arraybuffer";
+    const handle: { ws: WebSocket; mic: MicHandle | null } = { ws, mic: null };
+    sttRef.current = handle;
+    ws.onmessage = (e) => {
+      const m = JSON.parse(e.data as string);
+      if (m.type === "mock") setSttMsg(m.message);
+      else if (m.type === "status") setSttMsg(m.status === "up" ? "Listening - say “Okay Agent”…" : m.error || `speech recognition ${m.status}`);
+      else if (m.type === "transcript") {
+        setSttHeard({ text: m.text, final: m.is_final, wake: m.wake });
+        if (m.wake) setSttWake(true);
+      }
+    };
+    ws.onclose = () => setSttOn(false);
+    ws.onopen = async () => {
+      try {
+        handle.mic = await startMic((pcm) => {
+          if (ws.readyState === WebSocket.OPEN) ws.send(pcm);
+        });
+        setSttOn(true);
+      } catch (err) {
+        setSttMsg(`Microphone: ${err instanceof Error ? err.message : String(err)}`);
+        ws.close();
+      }
+    };
+  }
 
   async function toggleMic() {
     if (micState === "on") {
@@ -155,6 +204,11 @@ export default function Check() {
           <button onClick={() => void playVoice()} disabled={playing} data-testid="voice-test">{playing ? "Playing…" : "Play voice test"}</button>
           <span className="muted">Plays a sentence in the configured voice.</span>
         </div>
+        <div className="row">
+          <button onClick={() => void toggleStt()} data-testid="stt-test">{sttOn ? "Stop speech test" : "Test speech recognition + wake phrase"}</button>
+          <span className={sttWake ? "good" : "muted"}>{sttWake ? "✅ “Okay Agent” heard!" : sttMsg}</span>
+        </div>
+        {sttHeard && <div className={`interim ${sttHeard.final ? "final" : ""}`} data-testid="stt-heard">{sttHeard.text}</div>}
         <p className="muted">
           Tip: wear headphones for the live demo. Then say <b>“Okay Agent”</b> during a slide to ask a question.
         </p>

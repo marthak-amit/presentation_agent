@@ -146,3 +146,8 @@ Legend: **REAL** = talks to the real service when its key is present; **MOCK** =
 - **Script editor + narration options**: edit/regenerate per slide (tone, length, free-form instruction), saved script re-indexes Q&A, refreshes highlighter targets, voices only changed sentences; orphaned audio removed. Audio URLs are versioned (`?v=mtime`) so browsers never replay stale audio.
 - **Q&A report export** (`/sessions/{id}/export.md`), deck delete, ElevenLabs retries (429/5xx/network, honouring Retry-After) before falling back, "retry voice generation" if sentences fell back to silent mock audio, `WAKE_PHRASES` env.
 - Tests: 165 passing.
+- **Latency**: when Deepgram's endpointer says the speaker stopped (`speech_final`) and the final text is a finished sentence, the answer starts immediately instead of waiting for UtteranceEnd (~0.5 s saved; `endpointing=500`). Ambiguous endings still wait for UtteranceEnd.
+- **Voice quality**: pre-generation sends the neighbouring sentences to ElevenLabs (`previous_text` / `next_text`) so intonation is continuous across clips.
+- **Bug fixed (found via a flaky test)**: warm-up, session start and pre-generation could synthesise the same file concurrently and collide on the temp file → exception in the Q&A loop. `AudioCache` now serialises per file and uses unique temp names (+ regression test).
+- **Setup check** also has a live *Test speech recognition + wake phrase* (mic → Deepgram → shows what it heard and confirms "Okay Agent"). Hold-to-talk button / **T** key are always available (noisy-room fallback).
+- `make install` creates `.venv` itself (fixes macOS "externally-managed-environment"); Makefile uses it automatically; `make check` prints the setup check in the terminal. Tests: 172 passing.

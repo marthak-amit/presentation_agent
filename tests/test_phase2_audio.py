@@ -34,7 +34,7 @@ async def test_cache_never_regenerates_real_audio(tmp_path):
     class Real:
         name = "elevenlabs"
 
-        async def synth(self, text):
+        async def synth(self, text, *ctx):
             calls.append(text)
             return b"\xff\xfb\x90\x00" + bytes(500)
 
@@ -56,7 +56,7 @@ async def test_cache_upgrades_mock_audio_when_real_provider_appears(tmp_path):
     class Real:
         name = "aura"
 
-        async def synth(self, text):
+        async def synth(self, text, *ctx):
             calls.append(1)
             return bytes(600)
 
@@ -69,7 +69,7 @@ async def test_tts_chain_falls_back_and_trips_breaker():
         name = "elevenlabs"
         n = 0
 
-        async def synth(self, text):
+        async def synth(self, text, *ctx):
             Bad.n += 1
             raise RuntimeError("503")
 
@@ -273,3 +273,64 @@ async def test_changed_audio_gets_a_new_url_so_browsers_do_not_replay_stale_audi
     os.utime(p, ns=(p.stat().st_atime_ns, p.stat().st_mtime_ns + 5_000_000))
     assert c.session._sentence_url(1, 0) != u1 and "?v=" in u1
     await c.close()
+
+
+async def test_elevenlabs_gets_neighbouring_sentences_for_prosody(settings):
+    import json as _json
+    from dataclasses import replace
+
+    import httpx
+
+    from backend.tts.elevenlabs import ElevenLabsTTS
+
+    seen = []
+
+    def h(req):
+        seen.append(_json.loads(req.content))
+        return httpx.Response(200, content=b"\xff\xfb\x90\x00" + bytes(500))
+
+    s = replace(settings, elevenlabs_api_key="k", elevenlabs_voice_id="v", elevenlabs_model_id="m")
+    t = ElevenLabsTTS(s, httpx.AsyncClient(transport=httpx.MockTransport(h)))
+    await t.synth("Middle sentence.", "Before it.", "After it.")
+    await t.synth("Alone.")
+    assert seen[0]["previous_text"] == "Before it." and seen[0]["next_text"] == "After it."
+    assert "previous_text" not in seen[1] and "next_text" not in seen[1]
+
+
+async def test_pregen_passes_neighbours_to_the_provider(svc):
+    from backend.services import attach_tts
+    from backend.tts.chain import FallbackTTS
+
+    ctx = {}
+
+    class Rec:
+        name = "elevenlabs"
+
+        async def synth(self, text, previous="", next=""):
+            ctx[text] = (previous, next)
+            return b"\xff\xfb\x90\x00" + bytes(500)
+
+    attach_tts(svc, FallbackTTS([Rec()]))
+    deck_id = await make_ready_deck(svc)
+    flat = [t for s in svc.store.narration(deck_id) for t in s["sentences"]]
+    assert ctx[flat[3]] == (flat[2], flat[4])
+    assert ctx[flat[0]][0] == "" and ctx[flat[-1]][1] == ""
+
+
+async def test_concurrent_requests_for_the_same_audio_synthesise_once(tmp_path):
+    """Regression: server warm-up, session warm-up and pre-generation all ask for the stock clips at the same time."""
+    calls = []
+
+    class Slow:
+        name = "elevenlabs"
+
+        async def synth(self, text, *ctx):
+            calls.append(text)
+            await asyncio.sleep(0.05)
+            return b"\xff\xfb\x90\x00" + bytes(500)
+
+    cache = AudioCache(FallbackTTS([Slow(), FakeTTS()]))
+    path = tmp_path / "go_ahead.mp3"
+    results = await asyncio.gather(*(cache.ensure(path, "Sure, go ahead.") for _ in range(8)))
+    assert len(calls) == 1 and all(r[0] == path for r in results) and path.exists()
+    assert not list(tmp_path.glob("*.tmp"))

@@ -19,7 +19,7 @@ class CountingProvider:
     def __init__(self, name="elevenlabs", fail=False):
         self.name, self.fail, self.calls = name, fail, 0
 
-    async def synth(self, text):
+    async def synth(self, text, *ctx):
         self.calls += 1
         if self.fail:
             raise ConnectionError("network unreachable")

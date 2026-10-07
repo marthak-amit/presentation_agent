@@ -31,6 +31,7 @@ class Settings:
     deepgram_api_key: str = ""
     deepgram_stt_model: str = ""
     deepgram_tts_model: str = ""
+    deepgram_ws_base: str = ""  # override wss://api.deepgram.com/v1/listen (proxies, tests)
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
     elevenlabs_model_id: str = ""
@@ -68,6 +69,7 @@ class Settings:
             deepgram_api_key=_env("DEEPGRAM_API_KEY"),
             deepgram_stt_model=_env("DEEPGRAM_STT_MODEL"),
             deepgram_tts_model=_env("DEEPGRAM_TTS_MODEL"),
+            deepgram_ws_base=_env("DEEPGRAM_WS_BASE"),
             elevenlabs_api_key=_env("ELEVENLABS_API_KEY"),
             elevenlabs_voice_id=_env("ELEVENLABS_VOICE_ID"),
             elevenlabs_model_id=_env("ELEVENLABS_MODEL_ID"),

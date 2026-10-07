@@ -26,7 +26,7 @@ def build_url(settings: Settings, keyterms: list[str], language: str = "multi", 
         ("interim_results", "true"),
         ("utterance_end_ms", "1000"),
         ("vad_events", "true"),
-        ("endpointing", "300"),
+        ("endpointing", "500"),
         ("encoding", "linear16"),
         ("sample_rate", "16000"),
         ("channels", "1"),
@@ -46,7 +46,8 @@ def parse_message(raw: str | bytes) -> STTEvent | None:
         text = (alts[0].get("transcript") or "").strip()
         if not text:
             return None
-        return STTEvent("transcript", text, bool(msg.get("is_final")), float(alts[0].get("confidence", 1.0)))
+        return STTEvent("transcript", text, bool(msg.get("is_final")), float(alts[0].get("confidence", 1.0)),
+                        bool(msg.get("speech_final")))
     if t == "UtteranceEnd":
         return STTEvent("utterance_end")
     if t == "SpeechStarted":

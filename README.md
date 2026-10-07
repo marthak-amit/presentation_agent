@@ -15,7 +15,7 @@ Requirements: Python 3.11+, Node 18+, LibreOffice (`soffice`) and poppler (`pdft
 (macOS: `brew install --cask libreoffice && brew install poppler` · Debian/Ubuntu: `apt install libreoffice-impress poppler-utils`)
 
 ```bash
-make install        # pip + npm; creates .env from .env.example
+make install        # creates .venv, installs pip + npm deps, creates .env from .env.example
 $EDITOR .env        # add your keys (see below) - everything works without them in MOCK mode
 make dev            # backend :8000 + frontend :5173
 ```
@@ -43,7 +43,7 @@ blocked it falls back to a built-in hashing embedder so nothing breaks).
 - **Script editor** (`/script/{deck}`): edit what will be said per slide, or ask the AI to rewrite it ("shorter", "more casual", "mention the pilot"). Only changed sentences are re-voiced; the Q&A index and slide highlighter follow. Tone (conversational / formal / energetic / storytelling) and length are chosen at upload.
 - **Live reading highlighter + mouse arrow** follow the line being spoken, in narration and in answers.
 - **Voice**: say **"Okay Agent"** then a question, or a command: "next slide", "previous slide", "go to slide 3", "pause", "continue", "repeat this slide", "start over". Cut an answer short with "Okay Agent" / "wait" / "stop". Extra wake spellings: `WAKE_PHRASES` in `.env`.
-- **Keyboard**: Space pause/resume · ←/→ slides · F full screen · M mic · B voice commands on/off. Thumbnail strip, progress bar, talk timer, full-screen stage mode with big captions.
+- **Keyboard**: hold T to talk (push-to-talk) · Space pause/resume · ←/→ slides · F full screen · M mic · B voice commands on/off. Thumbnail strip, progress bar, talk timer, full-screen stage mode with big captions.
 - **Q&A report**: the end screen has *Download Q&A report (.md)* (questions, answers, a checklist of follow-ups to send).
 - Answers come in the language of the question (English / Hindi / Hinglish).
 

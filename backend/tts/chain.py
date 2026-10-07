@@ -35,12 +35,12 @@ class FallbackTTS:
     def primary_name(self) -> str:
         return self.providers[0].name
 
-    async def synth(self, text: str) -> tuple[bytes, str]:
+    async def synth(self, text: str, previous: str = "", next: str = "") -> tuple[bytes, str]:
         for p in self.providers:
             if self._down_until.get(p.name, 0) > self._clock():
                 continue
             try:
-                return await p.synth(text), p.name
+                return await p.synth(text, previous, next), p.name
             except Exception as e:
                 self.last_error = f"{p.name}: {e}"
                 if p.name != "fake":

@@ -208,7 +208,8 @@ class PresenterSession:
 
     async def _setup_stt(self) -> None:
         if self.cfg.use_real_stt:
-            self.stt = DeepgramSTT(self.cfg, self._on_stt_event, keyterms=ALL_TRIGGERS)
+            kw = {"base_url": self.cfg.deepgram_ws_base} if self.cfg.deepgram_ws_base else {}
+            self.stt = DeepgramSTT(self.cfg, self._on_stt_event, keyterms=ALL_TRIGGERS, **kw)
         else:
             self.stt = FakeSTT(self._on_stt_event)
         await self.stt.start()
@@ -435,8 +436,10 @@ class PresenterSession:
     async def _play_sentence(self, n: int, i: int, text: str) -> None:
         assert self.plan is not None
         store, cache = self.svc.store, self.svc.audio
-        path, _provider = await cache.ensure(store.audio_path(self.deck_id, n, i), text)
         nxt = self.plan.next_pos(n, i)
+        prev_text = self.plan.sentence(n, i - 1) or "" if i > 0 else ""
+        path, _provider = await cache.ensure(store.audio_path(self.deck_id, n, i), text, prev_text,
+                                             (self.plan.sentence(*nxt) or "") if nxt else "")
         next_url = None
         if nxt is not None:
             nt = self.plan.sentence(*nxt)
@@ -484,7 +487,7 @@ class PresenterSession:
 
     # ================================================================== STT / barge-in
     async def _on_sim(self, m: M.SimTranscript) -> None:
-        await self._on_stt_event(STTEvent("transcript", m.text, m.is_final, m.confidence))
+        await self._on_stt_event(STTEvent("transcript", m.text, m.is_final, m.confidence, m.speech_final))
         if m.utterance_end:
             await self._on_stt_event(STTEvent("utterance_end"))
 
@@ -493,6 +496,11 @@ class PresenterSession:
         if ev.kind == "transcript":
             await self._send(M.Transcript(text=ev.text, is_final=ev.is_final, confidence=ev.confidence))
             await self._on_transcript(ev.text, ev.is_final, ev.confidence, now)
+            # Fast path: the endpointer says the speaker stopped AND the final text is a finished sentence ->
+            # answer now instead of waiting ~0.5 s longer for UtteranceEnd (saves most of the first-word latency).
+            if (ev.is_final and ev.speech_final and self.state in (S.LISTENING, S.OPEN_QA) and not self._ptt_active
+                    and ev.text.rstrip()[-1:] in ".?!।" and len(self.buf.text().split()) >= 3):
+                await self._on_utterance_end(now)
         elif ev.kind == "utterance_end":
             await self._on_utterance_end(now)
 
