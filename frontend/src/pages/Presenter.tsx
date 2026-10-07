@@ -78,7 +78,7 @@ export default function Presenter() {
         {ended && (
           <div className="overlay" data-testid="end-screen">
             <h2>{snap.state === "OPEN_QA" ? "Open Q&A" : "That's the end"}</h2>
-            <p className="muted">Say “Hello One” and ask your question (or use the simulate box).</p>
+            <p className="muted">Say “Okay Agent” and ask your question (or use the simulate box).</p>
             <h3>Questions asked ({snap.questions.length})</h3>
             <ol>{snap.questions.map((q, i) => <li key={i}>{q.question}</li>)}</ol>
             <h3>Unanswered — follow up ({snap.unanswered.length})</h3>
@@ -128,7 +128,7 @@ export default function Presenter() {
         </button>
       </div>
       <p className="muted" data-testid="wake-hint">
-        🎤 To ask a question, say <b>“Hello One”</b> {snap.micOn ? "(listening…)" : "— enable the microphone first"}
+        🎤 To ask a question, say <b>“Okay Agent”</b> {snap.micOn ? "(listening…)" : "— enable the microphone first"}
         {!snap.bargeIn && " · voice commands are OFF: use Hold to talk"}
       </p>
       {snap.micError && <p className="error">{snap.micError}</p>}

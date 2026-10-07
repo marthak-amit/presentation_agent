@@ -37,6 +37,9 @@ def test_layout_has_normalised_line_boxes(layout):
     for p in paras:
         for ln in p["lines"]:
             assert 0 <= ln["x0"] < ln["x1"] <= 1 and 0 <= ln["y0"] < ln["y1"] <= 1
+            ws = ln["words"]  # per-word boxes drive the live highlighter
+            assert ws and ws[0]["x0"] >= ln["x0"] - 1e-3 and ws[-1]["x1"] <= ln["x1"] + 1e-3
+            assert all(a["x1"] <= b["x0"] + 1e-3 for a, b in zip(ws, ws[1:]))
     # bullets are separate paragraphs and sit below each other
     ys = [p["lines"][0]["y0"] for p in paras[1:]]
     assert ys == sorted(ys)
@@ -116,4 +119,20 @@ async def test_answer_about_another_slide_points_there_without_goto(svc):
     pricing = [a for a in ans if a["slide_n"] == 5 and a["pointer"]]
     assert pricing, [(a["slide_n"], a["pointer"], a["text"][:40]) for a in ans]
     assert "dollars" in pricing[0]["pointer"]["text"].lower()
+    assert pricing[0]["pointer"]["lines"] and pricing[0]["pointer"]["lines"][0]["words"]
     await c.close()
+
+
+def test_matched_line_flags_the_words_the_speaker_mentions(layout):
+    hit = CursorMatcher(layout, HashEmbedder()).match(5, "Growth is one hundred forty-nine dollars a month.")
+    line = hit["lines"][0]
+    key_words = [w for w in line["words"] if w["key"]]
+    assert 2 <= len(key_words) < len(line["words"])  # e.g. "Growth", "149", "dollars" - not every word
+    assert hit["x0"] == line["x0"] and hit["text"].startswith("Starter 49 dollars")
+
+
+def test_placeholder_layout_has_word_boxes():
+    lay = placeholder_layout([{"n": 1, "title": "Two words", "body": "alpha beta gamma"}])
+    ws = lay[1]["paras"][1]["lines"][0]["words"]
+    assert [w["t"] for w in ws] == ["alpha", "beta", "gamma"]
+    assert ws[0]["x1"] <= ws[1]["x0"] <= ws[1]["x1"] <= ws[2]["x0"]

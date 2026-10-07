@@ -143,7 +143,7 @@ class PresenterSession:
     def _warnings(self) -> list[str]:
         w: list[str] = []
         if self.stt.status == "down":
-            w.append("Speech recognition offline - voice commands (\"Hello One\") won't work; use Hold to talk")
+            w.append("Speech recognition offline - voice commands (\"Okay Agent\") won't work; use Hold to talk")
         tts = self.svc.tts
         if getattr(tts, "real", False) and getattr(tts, "last_error", None) and tts.degraded():
             w.append(f"TTS degraded ({tts.last_error[:80]}) - playing cached audio")
@@ -235,7 +235,11 @@ class PresenterSession:
 
     @staticmethod
     def _pointer(box: dict | None) -> M.Pointer | None:
-        return M.Pointer(x0=box["x0"], y0=box["y0"], x1=box["x1"], y1=box["y1"], text=box.get("text", "")) if box else None
+        if not box:
+            return None
+        lines = [M.PointerLine(x0=ln["x0"], y0=ln["y0"], x1=ln["x1"], y1=ln["y1"],
+                               words=[M.PointerWord(**w) for w in ln.get("words", [])]) for ln in box.get("lines", [])]
+        return M.Pointer(x0=box["x0"], y0=box["y0"], x1=box["x1"], y1=box["y1"], text=box.get("text", ""), lines=lines)
 
     def _match_pointer(self, slide_n: int, text: str, others: tuple[int, ...] = ()) -> tuple[int, M.Pointer | None]:
         """Line of the slide being shown that `text` is about. If the sentence is clearly about a line on one of the

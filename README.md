@@ -42,7 +42,7 @@ blocked it falls back to a built-in hashing embedder so nothing breaks).
 1. **Ingest** (`POST /decks`): slides → PNGs, speaker notes → first-person narration (45–75 s per slide, sequential Groq calls with 429 backoff),
    narration split into sentences, everything indexed in Chroma, then **every sentence is pre-rendered to MP3** (cached; never regenerated) plus the stock clips.
 2. **Present**: the server holds the playhead `(slide, sentence)` and tells the browser what to play; the browser reports when each clip ends.
-3. **Interrupt**: the mic streams continuously to Deepgram. Say **"Hello One"** (or "I have a question", "excuse me", "wait", "ek sawaal", …),
+3. **Interrupt**: the mic streams continuously to Deepgram. Say **"Okay Agent"** (or "I have a question", "excuse me", "wait", "ek sawaal", …),
    or hold **Hold to talk**, to pause with a 150 ms fade → "Sure, go ahead." → the agent listens.
 4. **Answer**: top-3 RAG chunks → Groq (streaming, tools `search_kb / goto_slide / resume_presenting`) → sentence-by-sentence TTS → playback.
    Then "Does that answer your question? Anything else?" → 4 s window → "Great, let's continue." → resumes at the **start of the interrupted sentence**.

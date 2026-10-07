@@ -1,9 +1,12 @@
+import type { PointerLine } from "../audio/playbackQueue";
+
 export interface ActivePointer {
   key: number; // changes for every new target
   x0: number;
   y0: number;
   x1: number;
   y1: number;
+  lines?: PointerLine[];
   durationMs: number;
 }
 

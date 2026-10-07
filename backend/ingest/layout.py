@@ -48,7 +48,8 @@ def extract_layout(pdf: Path) -> dict[int, dict]:
                     continue
                 y0, y1 = float(line.get("yMin")), float(line.get("yMax"))
                 box = {"text": text, "x0": round(words[0][1] / pw, 4), "x1": round(words[-1][2] / pw, 4),
-                       "y0": round(y0 / ph, 4), "y1": round(y1 / ph, 4)}
+                       "y0": round(y0 / ph, 4), "y1": round(y1 / ph, 4),
+                       "words": [{"t": w[0], "x0": round(w[1] / pw, 4), "x1": round(w[2] / pw, 4)} for w in words]}
                 if cur is None or starts_bullet:
                     cur = {"text": text, "lines": [box]}
                     paras.append(cur)
@@ -59,6 +60,18 @@ def extract_layout(pdf: Path) -> dict[int, dict]:
     return layout
 
 
+def _split_words(text: str, x0: float, x1: float) -> list[dict]:
+    """Spread words over [x0, x1] proportionally to their length (placeholder renders have no word boxes)."""
+    ws = text.split()
+    total = sum(len(w) + 1 for w in ws) or 1
+    out, x = [], x0
+    for w in ws:
+        wx = (x1 - x0) * (len(w) + 1) / total
+        out.append({"t": w, "x0": round(x, 4), "x1": round(x + wx - (x1 - x0) / total * 0.6, 4)})
+        x += wx
+    return out
+
+
 def placeholder_layout(slides: list[dict], size=(1280, 720)) -> dict[int, dict]:
     """Mirror of ingest.render.placeholder_png geometry."""
     w, h = size
@@ -66,13 +79,16 @@ def placeholder_layout(slides: list[dict], size=(1280, 720)) -> dict[int, dict]:
     for s in slides:
         paras = []
         title = f"{s['n']}. {s.get('title', '')}"[:60]
+        tx1 = min(0.97, (60 + 30 * len(title)) / w)
         paras.append({"text": s.get("title", ""), "lines": [
-            {"text": s.get("title", ""), "x0": 60 / w, "x1": min(0.97, (60 + 30 * len(title)) / w), "y0": 50 / h, "y1": 115 / h}]})
+            {"text": s.get("title", ""), "x0": 60 / w, "x1": tx1, "y0": 50 / h, "y1": 115 / h,
+             "words": _split_words(s.get("title", ""), 60 / w, tx1)}]})
         y = 160
         for line in s.get("body", "").splitlines()[:10]:
             t = line[:70]
-            paras.append({"text": t, "lines": [{"text": t, "x0": 80 / w, "x1": min(0.97, (80 + 17 * (len(t) + 2)) / w),
-                                                "y0": y / h, "y1": (y + 34) / h}]})
+            bx1 = min(0.97, (80 + 17 * (len(t) + 2)) / w)
+            paras.append({"text": t, "lines": [{"text": t, "x0": 80 / w, "x1": bx1, "y0": y / h, "y1": (y + 34) / h,
+                                                "words": _split_words(t, 80 / w, bx1)}]})
             y += 48
         out[s["n"]] = {"paras": paras}
     return out

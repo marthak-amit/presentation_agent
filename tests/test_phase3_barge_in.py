@@ -113,19 +113,19 @@ def test_sentence_streamer_splits_incrementally():
     assert normalize("Hello,  World!") == "hello world"
 
 
-@pytest.mark.parametrize("text", ["Hello One", "Hello, one.", "hello 1", "Hello won", "hello wan", "hello one how much is the growth plan"])
-def test_hello_one_wake_phrase_fires(text):
+@pytest.mark.parametrize("text", ["Okay Agent", "OK, agent.", "okay, Agent!", "o.k. agent", "ok agent", "Okay agent how much is the growth plan"])
+def test_okay_agent_wake_phrase_fires(text):
     m = find_trigger(text)
-    assert m is not None and m.trigger.startswith("hello "), text
+    assert m is not None and m.trigger in ("okay agent", "ok agent", "o k agent"), text
 
 
-@pytest.mark.parametrize("text", ["hello all", "hello everyone", "hello once", "hello on", "hello 10", "shello one", "hello", "hello ai"])
-def test_other_greetings_are_not_the_wake_phrase(text):
+@pytest.mark.parametrize("text", ["okay", "agent", "okay agents", "hello one", "hello ai", "okay then agent smith", "tokay agent", "ok"])
+def test_other_phrases_are_not_the_wake_phrase(text):
     assert find_trigger(text) is None, text
 
 
-def test_hello_one_with_inline_question_skips_go_ahead():
+def test_okay_agent_with_inline_question_skips_go_ahead():
     det = BargeInDetector(cooldown_s=0)
-    d = det.check("Hello One how much is the Growth plan per month", 0.9)
+    d = det.check("Okay Agent how much is the Growth plan per month", 0.9)
     assert d is not None and d.treat_as_question
-    assert strip_leading_trigger("Hello One, how much is the Growth plan") == "how much is the Growth plan"
+    assert strip_leading_trigger("Okay Agent, how much is the Growth plan") == "how much is the Growth plan"

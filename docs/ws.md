@@ -24,7 +24,7 @@ IDLE ──start──▶ PRESENTING ──trigger/hand-raise/PTT──▶ PAUSE
 |---|---|---|
 | `start_session` | `deck_id`, `barge_in=true`, `slide_n?`, `sentence_i=0` | **must be first.** `slide_n/sentence_i` resume position after a reconnect |
 | `control` | `action`: `start\|pause\|resume\|next\|prev\|goto\|restart`, `slide_n?` | transport. `resume` while LISTENING/ANSWERING skips the Q&A |
-| `hand_raise` | – | same pause event as a voice trigger. No UI button any more (voice command **\"Hello One\"** replaced it); kept for API/tests |
+| `hand_raise` | – | same pause event as a voice trigger. No UI button any more (voice command **\"Okay Agent\"** replaced it); kept for API/tests |
 | `set_barge_in` | `enabled` | UI toggle: voice barge-in ON / push-to-talk only |
 | `ptt` | `active` | push-to-talk. `true` pauses & listens (no "go ahead"); `false` ends the utterance immediately |
 | `audio_ended` | `play_id`, `interrupted=false` | client finished (or was cut off) playing an item. **Server sequencing depends on this**; if it never arrives the server times out and continues |
@@ -51,9 +51,11 @@ IDLE ──start──▶ PRESENTING ──trigger/hand-raise/PTT──▶ PAUSE
 
 ### Animated pointer
 
-`play_sentence` and `play_answer` may carry `pointer: {x0,y0,x1,y1,text}` – the box of the slide line being talked about,
-normalised 0..1 of the slide image. The client applies it when that item **starts playing**: a mouse arrow glides along a
-curved path to the start of the line, then sweeps along it for the duration of the clip, with a highlighter under the line.
+`play_sentence` and `play_answer` may carry `pointer: {x0,y0,x1,y1,text,lines[]}` – the slide text being talked about,
+normalised 0..1 of the slide image. `lines[]` = `{x0,y0,x1,y1,words[{x0,x1,key}]}` read in order (a short wrapped bullet is highlighted whole);
+`key` marks words the speaker mentions. The client applies it when that item **starts playing**: a mouse arrow glides along a
+curved path to the start of the text, then a marker paints over it in step with the voice (strong fill = already said) while
+mentioned words pop out as it passes them.
 `pointer: null` = nothing matches (arrow stays where it is). An answer may carry a `slide_n` different from the playhead
 slide when its sentence is about a line of another slide it was drawn from; the client shows that slide until the talk resumes.
 Boxes come from `data/decks/{id}/layout.json` (`pdftotext -bbox-layout` of the LibreOffice PDF) matched to sentences

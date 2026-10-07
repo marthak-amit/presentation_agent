@@ -251,11 +251,11 @@ async def test_open_qa_after_deck_end(svc, deck):
     await c.close()
 
 
-async def test_hello_one_voice_command_stops_the_talk_and_listens(svc, deck):
+async def test_okay_agent_voice_command_stops_the_talk_and_listens(svc, deck):
     c = await presenting(svc, deck)
-    await c.sim("Hello One", final=False)
+    await c.sim("Okay Agent", final=False)
     hit = await c.wait_for(lambda: c.of("barge_in_hit") and c.of("barge_in_hit")[0])
-    assert hit["trigger"].startswith("hello ") and hit["detect_ms"] < 400
+    assert hit["trigger"] in ("okay agent", "ok agent") and hit["detect_ms"] < 400
     pause = await c.wait_for(lambda: c.of("pause") and c.of("pause")[0])
     await c.wait_state("LISTENING")
     # presentation really stopped: nothing from the narration is sent after the pause
@@ -263,7 +263,7 @@ async def test_hello_one_voice_command_stops_the_talk_and_listens(svc, deck):
     await asyncio.sleep(0.8)
     assert len(c.of("play_sentence")) == n and pause["fade_ms"] == 150
     await c.wait_for(lambda: "go_ahead" in clips(c))
-    await c.sim("Hello One", final=True)
+    await c.sim("Okay Agent", final=True)
     await c.sim("how much is the growth plan per month", final=True, end=True)
     info = await c.wait_for(lambda: c.of("model_info") and c.of("model_info")[-1])
     assert info["question"] == "how much is the growth plan per month"  # wake phrase stripped from the question

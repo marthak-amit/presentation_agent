@@ -137,15 +137,18 @@ class CursorMatcher:
         # near-ties: point at whichever line the sentence mentions first (it is being read out in that order)
         close = [(sc, p) for sc, p in scored if sc >= 0.85 * best_score]
         best_score, best = min(close, key=lambda t: min((order[w] for w in t[1].kw & sk if w in order), default=999))
-        # which visual line of a wrapped paragraph?
-        line = best.lines[0]
-        top = 0
-        for ln in best.lines:
-            c = len(keywords(ln["text"]) & sk)
-            if c > top:
-                top, line = c, ln
-        return {"x0": line["x0"], "y0": line["y0"], "x1": line["x1"], "y1": line["y1"], "text": line["text"],
-                "score": round(best_score, 3)}
+        # short wrapped paragraphs are highlighted whole (read line by line); long ones only the best line
+        if len(best.lines) <= 3:
+            chosen = best.lines
+        else:
+            chosen = [max(best.lines, key=lambda ln: len(keywords(ln["text"]) & sk))]
+        lines = []
+        for ln in chosen:
+            words = [{"x0": w["x0"], "x1": w["x1"], "key": bool(keywords(w["t"]) & sk)} for w in ln.get("words", [])]
+            lines.append({"x0": ln["x0"], "y0": ln["y0"], "x1": ln["x1"], "y1": ln["y1"], "words": words})
+        first = lines[0]
+        return {"x0": first["x0"], "y0": first["y0"], "x1": first["x1"], "y1": first["y1"], "text": best.text,
+                "lines": lines, "score": round(best_score, 3)}
 
 
 def build_sentence_map(matcher: CursorMatcher, narration: list[dict]) -> dict[str, list[dict | None]]:

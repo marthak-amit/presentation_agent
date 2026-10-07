@@ -1,9 +1,22 @@
+export interface PointerWord {
+  x0: number;
+  x1: number;
+  key: boolean;
+}
+export interface PointerLine {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  words: PointerWord[];
+}
 export interface Pointer {
   x0: number;
   y0: number;
   x1: number;
   y1: number;
   text?: string;
+  lines?: PointerLine[];
 }
 
 export interface QueueItem {

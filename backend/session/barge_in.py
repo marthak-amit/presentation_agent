@@ -19,10 +19,10 @@ TRIGGERS = [
 ]
 # Deepgram `language=multi` may return Hindi in Devanagari script; same phrases, different script.
 EXTRA_TRIGGERS = ["एक सवाल", "एक मिनट", "रुको", "मेरा सवाल", "मेरा क्वेश्चन", "एक प्रश्न"]
-# Wake phrase: "Hello One" (STT may write it "Hello, 1." / "hello won" / "hello wan"), then the question.
-WAKE_TRIGGERS = ["hello one", "hello 1", "hello won", "hello wan"]
+# Wake phrase: "Okay Agent" (STT may write it "OK, agent" / "o.k. agent" / "okay, Agent!"), then the question.
+WAKE_TRIGGERS = ["okay agent", "ok agent", "o k agent"]
 ALL_TRIGGERS = TRIGGERS + EXTRA_TRIGGERS + WAKE_TRIGGERS
-# Short wake phrases sit close to ordinary speech ("hello once", "hello on"), so they need a tight match.
+# Short wake phrases sit close to ordinary speech, so they need a tight, word-bounded match.
 STRICT_THRESHOLD = 96
 STRICT_TRIGGERS = set(WAKE_TRIGGERS)
 
@@ -107,7 +107,7 @@ def find_trigger(text: str, triggers: list[str] = ALL_TRIGGERS, threshold: int =
             (al.dest_start > 0 and nt.joined[al.dest_start - 1] != " ")
             or (al.dest_end < len(nt.joined) and nt.joined[al.dest_end] != " ")
         ):
-            continue  # "shello one" / "hello once" / "hello 10" are not the wake phrase
+            continue  # "tokay agent" / "okay agents" are not the wake phrase
         first = nt.word_index_at(al.dest_start)
         if al.dest_start < len(nt.joined) and nt.joined[al.dest_start] == " ":
             first += 1

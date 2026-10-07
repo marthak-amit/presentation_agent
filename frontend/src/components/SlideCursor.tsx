@@ -1,9 +1,13 @@
-import { RefObject, useEffect, useRef } from "react";
+import { RefObject, useEffect, useMemo, useRef } from "react";
+import type { PointerLine } from "../audio/playbackQueue";
 import { ActivePointer } from "../session/types";
 
 /**
- * A fake mouse arrow that moves like a person: curved path, ease-in-out, tiny hand tremor, then glides along the
- * line while it is being spoken (so it "reads" with the voice). Coordinates are normalised to the slide image.
+ * Live "reading" highlighter + human-like mouse arrow.
+ *  - the arrow travels on a curved ease-in-out path to the start of the line being talked about,
+ *  - a marker then paints over the line(s) in step with the voice (strong fill = already said),
+ *  - words of the line that the speaker mentions pop out as the marker passes them.
+ * Coordinates are normalised (0..1) to the slide image; everything is recomputed per frame so resizing is safe.
  */
 type P = [number, number];
 interface Phase {
@@ -12,7 +16,7 @@ interface Phase {
   from: P;
   to: P;
   ctrl?: P;
-  kind: "travel" | "sweep" | "hold";
+  kind: "travel" | "hold" | "sweep";
 }
 
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -27,6 +31,10 @@ function contentRect(img: HTMLImageElement) {
   return { left: img.offsetLeft + (ew - w) / 2, top: img.offsetTop + (eh - h) / 2, w, h };
 }
 
+function linesOf(p: ActivePointer): PointerLine[] {
+  return p.lines && p.lines.length ? p.lines : [{ x0: p.x0, y0: p.y0, x1: p.x1, y1: p.y1, words: [] }];
+}
+
 export default function SlideCursor({
   imgRef,
   pointer,
@@ -36,29 +44,38 @@ export default function SlideCursor({
   pointer: ActivePointer | null;
   visible: boolean;
 }) {
+  const layer = useRef<HTMLDivElement>(null);
   const arrow = useRef<HTMLDivElement>(null);
-  const hl = useRef<HTMLDivElement>(null);
   const pos = useRef<P>([0.97, 0.95]);
   const started = useRef(false);
   const phases = useRef<Phase[]>([]);
-  const box = useRef<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
-  const hlOn = useRef(false);
+  const cur = useRef<{ lines: PointerLine[]; cum: number[] } | null>(null); // active lines + cumulative width fractions
+  const landed = useRef(false);
   const seed = useRef(Math.random() * 1000);
+  const lastT = useRef(performance.now());
+  const lines = useMemo(() => (pointer ? linesOf(pointer) : []), [pointer?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // schedule a new move whenever the spoken target changes
   useEffect(() => {
     const img = imgRef.current;
-    if (!pointer || !img) {
-      box.current = null;
-      hlOn.current = false;
+    if (!pointer || !img || !lines.length) {
+      cur.current = null;
+      landed.current = false;
       phases.current = [];
       return;
     }
     const cr = contentRect(img);
-    const h = pointer.y1 - pointer.y0;
-    const padX = Math.min(0.012, (pointer.x1 - pointer.x0) * 0.04);
-    const start: P = [pointer.x0 + padX, pointer.y0 + h * 0.78];
-    const end: P = [Math.max(start[0], pointer.x1 - padX), pointer.y0 + h * 0.78];
+    const widths = lines.map((l) => Math.max(1e-4, l.x1 - l.x0));
+    const total = widths.reduce((a, b) => a + b, 0);
+    let acc = 0;
+    const cum = [0, ...widths.map((w) => (acc += w / total))];
+    cur.current = { lines, cum };
+    landed.current = false;
+
+    const l0 = lines[0];
+    const h = l0.y1 - l0.y0;
+    const padX = Math.min(0.012, (l0.x1 - l0.x0) * 0.04);
+    const start: P = [l0.x0 + padX, l0.y0 + h * 0.78];
     const from = pos.current;
     const dx = (start[0] - from[0]) * cr.w;
     const dy = (start[1] - from[1]) * cr.h;
@@ -68,19 +85,14 @@ export default function SlideCursor({
     const bend = (Math.random() < 0.5 ? -1 : 1) * clamp(dist * 0.18, 8, 90); // curved, never a straight laser line
     const nx = dist ? -dy / dist : 0;
     const ny = dist ? dx / dist : 0;
-    const ctrl: P = [
-      (from[0] + start[0]) / 2 + (nx * bend) / cr.w,
-      (from[1] + start[1]) / 2 + (ny * bend) / cr.h,
-    ];
+    const ctrl: P = [(from[0] + start[0]) / 2 + (nx * bend) / cr.w, (from[1] + start[1]) / 2 + (ny * bend) / cr.h];
     const hold = 140;
-    const sweep = clamp(pointer.durationMs - travel - hold - 200, 500, 14000);
+    const sweep = clamp(pointer.durationMs - travel - hold - 150, 500, 20000);
     phases.current = [
       { t0: now, dur: travel, from, to: start, ctrl, kind: "travel" },
       { t0: now + travel, dur: hold, from: start, to: start, kind: "hold" },
-      { t0: now + travel + hold, dur: sweep, from: start, to: end, kind: "sweep" },
+      { t0: now + travel + hold, dur: sweep, from: start, to: start, kind: "sweep" },
     ];
-    box.current = { x0: pointer.x0, y0: pointer.y0, x1: pointer.x1, y1: pointer.y1 };
-    hlOn.current = false;
     started.current = true;
   }, [pointer?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -91,74 +103,104 @@ export default function SlideCursor({
       raf = requestAnimationFrame(tick);
       const img = imgRef.current;
       const el = arrow.current;
-      const hel = hl.current;
-      if (!img || !el || !hel) return;
+      const root = layer.current;
+      if (!img || !el || !root) return;
       const t = performance.now();
+      const dt = Math.min(0.1, (t - lastT.current) / 1000);
+      lastT.current = t;
       const cr = contentRect(img);
       let [x, y] = pos.current;
-      const ph = phases.current.find((p) => t >= p.t0 && t < p.t0 + p.dur) ?? null;
-      const last = phases.current[phases.current.length - 1];
-      if (ph) {
-        const u = clamp((t - ph.t0) / ph.dur, 0, 1);
-        if (ph.kind === "travel" && ph.ctrl) {
-          const e = ease(u);
-          const a = (1 - e) * (1 - e);
-          const b = 2 * (1 - e) * e;
-          const c = e * e;
-          x = a * ph.from[0] + b * ph.ctrl[0] + c * ph.to[0];
-          y = a * ph.from[1] + b * ph.ctrl[1] + c * ph.to[1];
-        } else if (ph.kind === "sweep") {
-          // mostly linear (matches the pace of speech) with slight human unevenness
-          const e = 0.85 * u + 0.15 * (u * u * (3 - 2 * u));
-          x = ph.from[0] + (ph.to[0] - ph.from[0]) * e;
-          y = ph.from[1] + Math.sin(u * Math.PI * 5 + seed.current) * 0.0025;
-        } else {
-          x = ph.to[0];
-          y = ph.to[1];
-        }
-        if (ph.kind !== "travel" && !hlOn.current) {
-          hlOn.current = true;
+      const c = cur.current;
+      const phs = phases.current;
+      const ph = phs.find((p) => t >= p.t0 && t < p.t0 + p.dur) ?? null;
+      const last = phs[phs.length - 1];
+      let progress = 0; // 0..1 across all highlighted lines
+
+      if (ph && ph.kind === "travel" && ph.ctrl) {
+        const e = ease(clamp((t - ph.t0) / ph.dur, 0, 1));
+        const a = (1 - e) * (1 - e);
+        const b = 2 * (1 - e) * e;
+        const cc = e * e;
+        x = a * ph.from[0] + b * ph.ctrl[0] + cc * ph.to[0];
+        y = a * ph.from[1] + b * ph.ctrl[1] + cc * ph.to[1];
+        pos.current = [x, y];
+      } else if (c && last && t >= phs[1].t0) {
+        if (!landed.current) {
+          landed.current = true;
           el.firstElementChild?.animate(
             [{ transform: "scale(1)" }, { transform: "scale(0.82)" }, { transform: "scale(1)" }],
             { duration: 220, easing: "ease-out" },
           ); // a "click" as it lands on the line
         }
+        const sweepStart = phs[2].t0;
+        const u = clamp((t - sweepStart) / phs[2].dur, 0, 1);
+        progress = t < sweepStart ? 0 : 0.88 * u + 0.12 * (u * u * (3 - 2 * u)); // ~linear, slightly human
+        // arrow tip rides the leading edge of the marker
+        let i = c.lines.length - 1;
+        for (let k = 0; k < c.lines.length; k++) if (progress <= c.cum[k + 1]) { i = k; break; }
+        const L = c.lines[i];
+        const lp = clamp((progress - c.cum[i]) / Math.max(1e-6, c.cum[i + 1] - c.cum[i]), 0, 1);
+        const tx = L.x0 + (L.x1 - L.x0) * lp;
+        const ty = L.y0 + (L.y1 - L.y0) * 0.78 + Math.sin(u * Math.PI * 5 + seed.current) * 0.0022;
+        const k = u >= 1 ? 1 : Math.min(1, dt * 9); // smooth hops between lines
+        x += (tx - x) * k;
+        y += (ty - y) * k;
         pos.current = [x, y];
-      } else if (last && t >= last.t0 + last.dur) {
-        x = last.to[0] + Math.sin(t / 900 + seed.current) * 0.0012; // resting hand tremor
-        y = last.to[1] + Math.cos(t / 1100 + seed.current) * 0.0018;
-        pos.current = [last.to[0], last.to[1]];
+        if (u >= 1) {
+          x += Math.sin(t / 900 + seed.current) * 0.0012; // resting hand tremor
+          y += Math.cos(t / 1100 + seed.current) * 0.0018;
+        }
       }
-      // arrow
       el.style.transform = `translate(${cr.left + x * cr.w}px, ${cr.top + y * cr.h}px)`;
-      // highlighter under the line being read
-      const b = box.current;
-      if (b && hlOn.current) {
-        const pad = 6;
-        hel.style.transform = `translate(${cr.left + b.x0 * cr.w - pad}px, ${cr.top + b.y0 * cr.h - 2}px)`;
-        hel.style.width = `${(b.x1 - b.x0) * cr.w + pad * 2}px`;
-        hel.style.height = `${(b.y1 - b.y0) * cr.h + 4}px`;
-        hel.style.opacity = "1";
-      } else {
-        hel.style.opacity = "0";
+
+      // highlighter(s)
+      const els = root.querySelectorAll<HTMLElement>("[data-hl]");
+      if (!c) {
+        els.forEach((e) => (e.style.opacity = "0"));
+        return;
       }
+      const on = landed.current;
+      c.lines.forEach((L, i) => {
+        const lineEl = root.querySelector<HTMLElement>(`[data-hl="${i}"]`);
+        if (!lineEl) return;
+        const pad = 6;
+        const lw = (L.x1 - L.x0) * cr.w;
+        lineEl.style.transform = `translate(${cr.left + L.x0 * cr.w - pad}px, ${cr.top + L.y0 * cr.h - 2}px)`;
+        lineEl.style.width = `${lw + pad * 2}px`;
+        lineEl.style.height = `${(L.y1 - L.y0) * cr.h + 4}px`;
+        lineEl.style.opacity = on ? "1" : "0";
+        const lp = clamp((progress - c.cum[i]) / Math.max(1e-6, c.cum[i + 1] - c.cum[i]), 0, 1);
+        const fill = lineEl.querySelector<HTMLElement>(".hl-fill");
+        if (fill) fill.style.width = `${lp * lw + (lp > 0 ? pad : 0)}px`;
+        lineEl.querySelectorAll<HTMLElement>(".hl-key").forEach((k, wi) => {
+          const w = L.words.filter((x) => x.key)[wi];
+          if (!w) return;
+          k.style.left = `${(w.x0 - L.x0) * cr.w + pad - 3}px`;
+          k.style.width = `${(w.x1 - w.x0) * cr.w + 6}px`;
+          const passed = lp * (L.x1 - L.x0) + L.x0 >= w.x0 + (w.x1 - w.x0) * 0.5;
+          k.classList.toggle("on", passed);
+        });
+      });
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [imgRef]);
 
   return (
-    <div className="cursor-layer" aria-hidden style={{ display: visible ? "block" : "none" }}>
-      <div ref={hl} className="cursor-highlight" />
+    <div ref={layer} className="cursor-layer" aria-hidden style={{ display: visible ? "block" : "none" }}>
+      {lines.map((L, i) => (
+        <div key={`${pointer?.key}-${i}`} data-hl={i} className="hl-line">
+          <div className="hl-fill" />
+          {L.words
+            .filter((w) => w.key)
+            .map((_, wi) => (
+              <div key={wi} className="hl-key" />
+            ))}
+        </div>
+      ))}
       <div ref={arrow} className="cursor-arrow" style={{ opacity: started.current || pointer ? 1 : 0 }}>
         <svg width="26" height="30" viewBox="0 0 26 30">
-          <path
-            d="M2 2 L2 24 L8 18.5 L12.5 28 L17 26 L12.6 16.8 L21 16.5 Z"
-            fill="#fff"
-            stroke="#111"
-            strokeWidth="1.8"
-            strokeLinejoin="round"
-          />
+          <path d="M2 2 L2 24 L8 18.5 L12.5 28 L17 26 L12.6 16.8 L21 16.5 Z" fill="#fff" stroke="#111" strokeWidth="1.8" strokeLinejoin="round" />
         </svg>
       </div>
     </div>

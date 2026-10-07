@@ -98,13 +98,28 @@ class StateMsg(_Msg):
     warnings: list[str] = Field(default_factory=list)  # degraded services (offline safety banner)
 
 
+class PointerWord(_Msg):
+    x0: float
+    x1: float
+    key: bool = False  # the word is mentioned in the spoken sentence -> emphasised as the highlighter passes it
+
+
+class PointerLine(_Msg):
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    words: list[PointerWord] = Field(default_factory=list)
+
+
 class Pointer(_Msg):
-    """The line of the slide being talked about; coordinates are 0..1 of the slide image."""
+    """The text being talked about; coordinates are 0..1 of the slide image. `lines` are read in order."""
     x0: float
     y0: float
     x1: float
     y1: float
     text: str = ""
+    lines: list[PointerLine] = Field(default_factory=list)
 
 
 class PlaySentence(_Msg):

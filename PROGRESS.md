@@ -123,3 +123,9 @@ Legend: **REAL** = talks to the real service when its key is present; **MOCK** =
 - **Decks uploaded before this change have no layout** → re-upload (or they just get no pointer).
 - Tests: `tests/test_pointer.py` (15). Verified in Chromium: arrow travels smoothly, highlight on landing, works during answers.
 - Known: hidden slides are skipped by LibreOffice's PDF export, which would shift page↔slide numbers (pre-existing limitation).
+
+## Follow-up 4: "Okay Agent" + live reading highlighter
+- Wake phrase is now **"Okay Agent"** (also "OK, agent", "o.k. agent"); strict word-bounded match. "Hello One"/"Hello AI" no longer trigger.
+- **Live highlighter**: while a sentence is spoken, a marker paints over the slide text it is about, in step with the voice (soft box = what this sentence is about, strong fill = already said); wrapped bullets/titles are read line by line; words the speaker mentions pop out with an orange outline as the marker passes them; the mouse arrow rides the leading edge. Works for narration and answers. Word boxes come from `pdftotext -bbox-layout` (layout.json) – decks need a re-upload to get them.
+- Timing is proportional to the clip length (not word-aligned to the audio) – visually in sync, not phoneme-exact.
+- Tests: pointer/word-box/keyword tests added; wake-phrase tests updated.
