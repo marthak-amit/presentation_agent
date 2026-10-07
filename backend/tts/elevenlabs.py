@@ -5,6 +5,7 @@ import asyncio
 import httpx
 
 from ..config import Settings
+from .el_errors import explain, parse_error
 
 
 class ElevenLabsTTS:
@@ -45,8 +46,9 @@ class ElevenLabsTTS:
             async with self._c.stream("POST", url, params={"output_format": "mp3_44100_128"}, json=body,
                                       headers={"xi-api-key": s.elevenlabs_api_key, "accept": "audio/mpeg"}) as r:
                 if r.status_code != 200:
-                    detail = (await r.aread())[:200]
-                    msg = f"ElevenLabs HTTP {r.status_code}: {detail!r}"
+                    status, message = parse_error(r.status_code, await r.aread())
+                    what, _fix = explain(r.status_code, status, message)
+                    msg = f"ElevenLabs HTTP {r.status_code}: {what}"
                     if r.status_code == 429 or r.status_code >= 500:
                         ra = r.headers.get("retry-after")
                         raise _Transient(msg, float(ra) if ra and ra.replace(".", "", 1).isdigit() else None)

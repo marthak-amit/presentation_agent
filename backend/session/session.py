@@ -151,7 +151,10 @@ class PresenterSession:
             why = getattr(self.stt, "last_error", None)
             w.append("Speech recognition offline" + (f": {why}" if why else "") + " - voice commands won't work for now")
         tts = self.svc.tts
-        if getattr(tts, "real", False) and getattr(tts, "last_error", None) and tts.degraded():
+        primary = getattr(tts, "primary_real", "")
+        if primary and getattr(tts, "last_provider", primary) not in ("", primary) and getattr(tts, "last_error", None):
+            w.append(f"Not using your {primary} voice - {tts.last_provider} is speaking instead: {tts.last_error[:200]}")
+        elif getattr(tts, "real", False) and getattr(tts, "last_error", None) and tts.degraded():
             w.append(f"TTS degraded ({tts.last_error[:80]}) - playing cached audio")
         return w
 

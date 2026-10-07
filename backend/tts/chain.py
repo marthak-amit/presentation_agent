@@ -22,6 +22,7 @@ class FallbackTTS:
         self._down_until: dict[str, float] = {}
         self._clock = clock
         self.last_error: str | None = None
+        self.last_provider: str = ""  # who served the most recent request
 
     @property
     def real(self) -> bool:
@@ -55,12 +56,17 @@ class FallbackTTS:
             if self._down_until.get(p.name, 0) > self._clock():
                 continue
             try:
-                return await p.synth(text, previous, next), p.name
+                audio = await p.synth(text, previous, next)
+                self.last_provider = p.name
+                if p.name == self.primary_real:
+                    self.last_error = None
+                return audio, p.name
             except Exception as e:
                 self.last_error = f"{p.name}: {e}"
                 if p.name != "fake":
                     self._down_until[p.name] = self._clock() + self.cooldown_s
                     log.warning("TTS provider %s failed (%s); disabled for %.0fs", p.name, e, self.cooldown_s)
+        self.last_provider = "fake"
         return await FakeTTS().synth(text), "fake"
 
 

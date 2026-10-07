@@ -26,6 +26,7 @@ export default function Check() {
   const [micMsg, setMicMsg] = useState("");
   const [peak, setPeak] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [voiceNote, setVoiceNote] = useState<{ ok: boolean; text: string } | null>(null);
   const stopMic = useRef<(() => void) | null>(null);
   const [sttOn, setSttOn] = useState(false);
   const [sttHeard, setSttHeard] = useState<{ text: string; final: boolean; wake: boolean } | null>(null);
@@ -144,13 +145,19 @@ export default function Check() {
     try {
       const r = await fetch("/preflight/voice");
       const provider = r.headers.get("X-TTS-Provider") ?? "?";
+      const primary = r.headers.get("X-TTS-Primary") ?? "";
+      const why = r.headers.get("X-TTS-Error") ?? "";
+      setVoiceNote(
+        primary && provider !== primary
+          ? { ok: false, text: `⚠ This is NOT your ${primary} voice - it fell back to "${provider}". Reason: ${why || "unknown"}` }
+          : { ok: provider !== "fake", text: provider === "fake" ? "Silent mock audio (no TTS keys)." : `Played with ${provider} ✔` },
+      );
       const blob = await r.blob();
       const a = new Audio(URL.createObjectURL(blob));
       a.onended = () => setPlaying(false);
       a.onerror = () => setPlaying(false);
       await a.play();
-      setMicMsg((m) => m);
-      setErr(provider === "fake" ? "Voice test played via the silent mock (no TTS keys)." : "");
+      void a;
     } catch (e) {
       setErr(`Could not play the voice test: ${String(e)}`);
       setPlaying(false);
@@ -204,6 +211,7 @@ export default function Check() {
           <button onClick={() => void playVoice()} disabled={playing} data-testid="voice-test">{playing ? "Playing…" : "Play voice test"}</button>
           <span className="muted">Plays a sentence in the configured voice.</span>
         </div>
+        {voiceNote && <p className={voiceNote.ok ? "good" : "error"} data-testid="voice-note">{voiceNote.text}</p>}
         <div className="row">
           <button onClick={() => void toggleStt()} data-testid="stt-test">{sttOn ? "Stop speech test" : "Test speech recognition + wake phrase"}</button>
           <span className={sttWake ? "good" : "muted"}>{sttWake ? "✅ “Okay Agent” heard!" : sttMsg}</span>

@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 from ..stt.deepgram import build_url
+from ..tts.el_errors import explain, parse_error
 
 router = APIRouter()
 
@@ -145,37 +146,32 @@ async def check_tts(svc) -> Check:
 
         async def run():
             h = {"xi-api-key": s.elevenlabs_api_key}
-            async with httpx.AsyncClient(timeout=8.0) as cl:
+            async with httpx.AsyncClient(timeout=10.0) as cl:
+                name = ""
                 r = await cl.get(f"https://api.elevenlabs.io/v1/voices/{s.elevenlabs_voice_id}", headers=h)
                 if r.status_code == 200:
                     j = r.json()
-                    c.detail = f"voice '{j.get('name', '?')}' ({j.get('category', 'voice')}) · model {s.elevenlabs_model_id}"
+                    name = f"voice '{j.get('name', '?')}' ({j.get('category', 'voice')})"
                     c.extra["voice"] = j.get("name", "")
+                elif r.status_code != 401 or _el_status(r) != "missing_permissions":
+                    status, message = parse_error(r.status_code, r.content)
+                    c.status = "fail"
+                    c.detail, c.fix = explain(r.status_code, status, message)
                     return
-                status = _el_status(r)
-                if r.status_code == 401 and status == "missing_permissions":
-                    # restricted key without "Voices: read": prove the key + voice id with a real (tiny) synthesis instead
-                    t = await cl.post(f"https://api.elevenlabs.io/v1/text-to-speech/{s.elevenlabs_voice_id}",
-                                      headers={**h, "accept": "audio/mpeg"},
-                                      json={"text": "Hi.", "model_id": s.elevenlabs_model_id})
-                    if t.status_code == 200 and len(t.content) > 200:
-                        c.detail = (f"key + voice id work (speech generated) · model {s.elevenlabs_model_id}. "
-                                    "The voice name is hidden because this key lacks 'Voices: read'.")
-                        return
-                    c.status = "fail"
-                    ts = _el_status(t)
-                    c.detail = f"API key lacks permission ({ts or t.status_code}) - it needs 'Text to Speech'"
-                    c.fix = "elevenlabs.io → Developers → API Keys: edit the key and enable Text to Speech (and Voices: read), or create an unrestricted key"
-                elif r.status_code == 401:
-                    c.status = "fail"
-                    c.detail = "API key rejected (HTTP 401 invalid_api_key)" if status in ("invalid_api_key", "") else f"HTTP 401 {status}"
-                    c.fix = ("Copy the key again from elevenlabs.io (it is shown only once), paste it in .env WITHOUT quotes/spaces, "
-                             "then RESTART make dev (changes to .env are only read at startup)")
-                elif r.status_code in (400, 404, 422):
-                    c.status, c.detail = "fail", f"voice id not found (HTTP {r.status_code})"
-                    c.fix = "Copy the voice ID (not the name) from My Voices into ELEVENLABS_VOICE_ID; for library voices click 'Add to my voices' first"
+                # Knowing the voice exists proves nothing: library voices, quota or plan limits only show up when
+                # speech is actually generated, and the app would then silently fall back to another voice.
+                t = await cl.post(f"https://api.elevenlabs.io/v1/text-to-speech/{s.elevenlabs_voice_id}",
+                                  headers={**h, "accept": "audio/mpeg"}, json={"text": "Hi.", "model_id": s.elevenlabs_model_id})
+                if t.status_code == 200 and len(t.content) > 200:
+                    c.detail = (f"{name or 'key + voice id work'} · speech generated OK · model {s.elevenlabs_model_id}"
+                                + ("" if name else " · (voice name hidden: key lacks 'Voices: read')"))
                 else:
-                    r.raise_for_status()
+                    status, message = parse_error(t.status_code, t.content)
+                    c.status = "fail"
+                    what, fix = explain(t.status_code, status, message)
+                    c.detail = f"{name + ' found, but ' if name else ''}speech generation FAILED: {what}"
+                    c.fix = fix
+                    c.extra["http"] = t.status_code
 
         return await _timed(run(), c)
     if s.use_aura:
@@ -260,5 +256,16 @@ async def voice_sample(request: Request, text: str = ""):
     svc = request.app.state.svc
     name = svc.settings.presenter_name
     sample = (text or f"Hi everyone, I am {name}. This is a quick voice test before we begin.")[:200]
-    audio, provider = await svc.tts.synth(sample)
-    return Response(audio, media_type="audio/mpeg", headers={"X-TTS-Provider": provider, "Cache-Control": "no-store"})
+    primary = svc.tts.providers[0]
+    err = ""
+    try:  # test the configured voice directly (ignoring the failure cool-down) so the real error is visible
+        if primary.name == "fake":
+            raise RuntimeError("no TTS keys configured")
+        audio, provider = await primary.synth(sample), primary.name
+    except Exception as e:
+        err = str(e)
+        audio, provider = await svc.tts.synth(sample)  # what the audience would hear instead
+    err = err.encode("ascii", "replace").decode()[:300]
+    return Response(audio, media_type="audio/mpeg",
+                    headers={"X-TTS-Provider": provider, "X-TTS-Error": err, "X-TTS-Primary": getattr(svc.tts, "primary_real", ""),
+                             "Cache-Control": "no-store"})
