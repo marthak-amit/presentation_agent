@@ -5,6 +5,7 @@ import hashlib
 import logging
 import math
 import re
+import threading
 from typing import Protocol
 
 log = logging.getLogger("rag.embed")
@@ -49,11 +50,15 @@ class STEmbedder:
     def __init__(self, model_name: str):
         from sentence_transformers import SentenceTransformer
 
-        self._m = SentenceTransformer(model_name)
+        # CPU on purpose: MiniLM is tiny, and torch's Apple-GPU (MPS) path aborts the whole process
+        # ("failed assertion ... IOGPUMetalCommandBuffer") when called from several threads.
+        self._m = SentenceTransformer(model_name, device="cpu")
+        self._lock = threading.Lock()  # retrieval and pointer matching embed from different threads
         self.name = "st-" + model_name.split("/")[-1]
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        return self._m.encode(texts, normalize_embeddings=True, show_progress_bar=False).tolist()
+        with self._lock:
+            return self._m.encode(texts, normalize_embeddings=True, show_progress_bar=False).tolist()
 
 
 def make_embedder(model_name: str, force_hash: bool = False) -> Embedder:

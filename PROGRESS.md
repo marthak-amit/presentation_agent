@@ -129,3 +129,6 @@ Legend: **REAL** = talks to the real service when its key is present; **MOCK** =
 - **Live highlighter**: while a sentence is spoken, a marker paints over the slide text it is about, in step with the voice (soft box = what this sentence is about, strong fill = already said); wrapped bullets/titles are read line by line; words the speaker mentions pop out with an orange outline as the marker passes them; the mouse arrow rides the leading edge. Works for narration and answers. Word boxes come from `pdftotext -bbox-layout` (layout.json) – decks need a re-upload to get them.
 - Timing is proportional to the clip length (not word-aligned to the audio) – visually in sync, not phoneme-exact.
 - Tests: pointer/word-box/keyword tests added; wake-phrase tests updated.
+
+## Fix: backend abort on macOS during answers
+`failed assertion _status < MTLCommandBufferStatusCommitted ... IOGPUMetalCommandBuffer` killed the backend while answering: sentence-transformers ran on the Apple GPU (MPS) and was called from several threads (retrieval + pointer matching). `STEmbedder` now uses `device="cpu"` and a lock. Regression test added.

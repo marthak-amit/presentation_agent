@@ -147,3 +147,37 @@ def test_real_libreoffice_render(tmp_path):
     mode = render_slides(SAMPLE, tmp_path / "slides", meta)
     assert mode == "libreoffice"
     assert all((tmp_path / "slides" / f"{i}.png").exists() for i in range(1, 6))
+
+
+def test_st_embedder_is_cpu_only_and_serialised(monkeypatch):
+    """Regression: concurrent MiniLM calls on the Apple GPU (MPS) abort the process."""
+    import sys
+    import threading
+    import time
+    import types
+
+    seen = {"device": None, "active": 0, "overlap": False}
+
+    class FakeModel:
+        def __init__(self, name, device=None):
+            seen["device"] = device
+
+        def encode(self, texts, **kw):
+            seen["active"] += 1
+            if seen["active"] > 1:
+                seen["overlap"] = True
+            time.sleep(0.02)
+            seen["active"] -= 1
+            import numpy as np
+
+            return np.zeros((len(texts), 384))
+
+    monkeypatch.setitem(sys.modules, "sentence_transformers", types.SimpleNamespace(SentenceTransformer=FakeModel))
+    from backend.rag.embed import STEmbedder
+
+    emb = STEmbedder("sentence-transformers/all-MiniLM-L6-v2")
+    assert seen["device"] == "cpu"
+    ts = [threading.Thread(target=emb.embed, args=(["x"],)) for _ in range(6)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not seen["overlap"]
