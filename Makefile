@@ -34,10 +34,12 @@ sample:
 
 # Same checks as the in-app setup page, from the terminal (backend must be running)
 check:
+	@curl -sf localhost:$(BACKEND_PORT)/health >/dev/null || { echo "The backend is not running on port $(BACKEND_PORT). Start it in another terminal tab with: make dev"; exit 1; }
 	@curl -s localhost:$(BACKEND_PORT)/preflight | $(PY) -c "import json,sys; r=json.load(sys.stdin); print('overall:', r['overall']); [print(f\"  {c['status']:5} {c['label']}: {c['detail']}\") for c in r['checks']]"
 
 # Re-generate the voice of every ready deck (after changing ELEVENLABS_VOICE_ID). Backend must be running.
 revoice:
+	@curl -sf localhost:$(BACKEND_PORT)/health >/dev/null || { echo "The backend is not running on port $(BACKEND_PORT). Start it in another terminal tab with: make dev"; exit 1; }
 	@for id in $$(curl -s localhost:$(BACKEND_PORT)/decks | $(PY) -c "import json,sys; [print(d['deck_id']) for d in json.load(sys.stdin) if d['status']=='ready']"); do \
 	  echo "re-voicing deck $$id"; curl -s -X POST localhost:$(BACKEND_PORT)/decks/$$id/audio; echo; \
 	done; echo "Generation runs in the background; watch 'Voice:' on the deck card (Upload page)."
