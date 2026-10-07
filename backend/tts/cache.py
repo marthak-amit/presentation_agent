@@ -34,6 +34,9 @@ class AudioCache:
             return False  # text changed
         if meta.get("provider") == "fake" and self.tts.real:
             return False  # upgrade mock audio once a real provider exists
+        provider = meta.get("provider", "")
+        if provider != "fake" and meta.get("voice", None) != self.tts.voice_of(provider):
+            return False  # ELEVENLABS_VOICE_ID / model / Aura voice changed -> re-voice
         return True
 
     async def ensure(self, path: Path, text: str, previous: str = "", next: str = "") -> tuple[Path, str]:
@@ -51,5 +54,6 @@ class AudioCache:
             tmp = path.with_name(f"{path.name}.{os.getpid()}.{id(audio)}.tmp")
             tmp.write_bytes(audio)
             tmp.replace(path)
-            _meta_path(path).write_text(json.dumps({"sha": _sha(text), "provider": provider}))
+            _meta_path(path).write_text(json.dumps({"sha": _sha(text), "provider": provider,
+                                                    "voice": self.tts.voice_of(provider)}))
             return path, provider

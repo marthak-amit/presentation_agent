@@ -198,6 +198,7 @@ class PresenterSession:
         # Warm the stock clips so the first interruption never waits on TTS.
         self._spawn(self._warm_clips(), "warm-clips")
         self._spawn(self._status_watch(), "stt-watch")
+        self._spawn(self._ensure_deck_audio(), "deck-audio")  # instant if cached; re-voices after a voice change
         await self._send(M.SessionReady(
             session_id=self.session_id, deck_id=deck_id, slide_count=len(self.plan),
             presenter=self.cfg.presenter_name, barge_in=barge_in,
@@ -267,6 +268,14 @@ class PresenterSession:
         except Exception as e:  # the pointer must never break speech
             log.debug("pointer match failed: %s", e)
             return slide_n, None
+
+    async def _ensure_deck_audio(self) -> None:
+        from ..tts.pregen import pregenerate_deck_audio
+
+        try:
+            await pregenerate_deck_audio(self.svc, self.deck_id)
+        except Exception as e:
+            log.warning("deck audio check failed: %s", e)
 
     async def _warm_clips(self) -> None:
         from ..tts.clips import ensure_all_clips

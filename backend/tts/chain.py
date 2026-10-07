@@ -27,6 +27,13 @@ class FallbackTTS:
     def real(self) -> bool:
         return any(p.name != "fake" for p in self.providers)
 
+    def voice_of(self, provider_name: str) -> str:
+        """Identity of the voice a provider currently produces (voice id + model); stored next to every cached clip."""
+        for p in self.providers:
+            if p.name == provider_name:
+                return getattr(p, "voice_key", "")
+        return ""
+
     def degraded(self) -> bool:
         """True while any real provider is in its cool-down window."""
         return any(self._down_until.get(p.name, 0) > self._clock() for p in self.providers if p.name != "fake")

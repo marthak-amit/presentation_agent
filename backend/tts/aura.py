@@ -14,6 +14,10 @@ class AuraTTS:
         self.s = settings
         self._c = client or httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=3.0))
 
+    @property
+    def voice_key(self) -> str:
+        return self.s.deepgram_tts_model
+
     async def synth(self, text: str, previous: str = "", next: str = "") -> bytes:
         r = await self._c.post(
             "https://api.deepgram.com/v1/speak",

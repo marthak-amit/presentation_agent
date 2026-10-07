@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import subprocess
 
@@ -334,3 +335,29 @@ async def test_concurrent_requests_for_the_same_audio_synthesise_once(tmp_path):
     results = await asyncio.gather(*(cache.ensure(path, "Sure, go ahead.") for _ in range(8)))
     assert len(calls) == 1 and all(r[0] == path for r in results) and path.exists()
     assert not list(tmp_path.glob("*.tmp"))
+
+
+async def test_changing_the_voice_regenerates_cached_audio(tmp_path):
+    """Regression: audio is cached per sentence, so a new ELEVENLABS_VOICE_ID must invalidate it."""
+    from types import SimpleNamespace
+
+    made = []
+
+    class Voice:
+        name = "elevenlabs"
+
+        def __init__(self, vid):
+            self.voice_key = f"{vid}:m"
+            self.vid = vid
+
+        async def synth(self, text, *ctx):
+            made.append(self.vid)
+            return b"\xff\xfb\x90\x00" + bytes(500)
+
+    path = tmp_path / "s0.mp3"
+    await AudioCache(FallbackTTS([Voice("old"), FakeTTS()])).ensure(path, "Hello there.")
+    await AudioCache(FallbackTTS([Voice("old"), FakeTTS()])).ensure(path, "Hello there.")
+    assert made == ["old"]  # same voice: cached
+    await AudioCache(FallbackTTS([Voice("new"), FakeTTS()])).ensure(path, "Hello there.")
+    assert made == ["old", "new"]  # new voice id: regenerated
+    assert json.loads(path.with_suffix(".meta.json").read_text())["voice"] == "new:m"

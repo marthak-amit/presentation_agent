@@ -14,6 +14,10 @@ class ElevenLabsTTS:
         self.s = settings
         self._c = client or httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=3.0))
 
+    @property
+    def voice_key(self) -> str:
+        return f"{self.s.elevenlabs_voice_id}:{self.s.elevenlabs_model_id}"
+
     RETRY_DELAYS = (0.4, 1.2)  # transient 429 / 5xx / network blips are retried before we fall back to another voice
 
     async def synth(self, text: str, previous: str = "", next: str = "") -> bytes:
