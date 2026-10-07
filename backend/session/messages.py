@@ -98,6 +98,15 @@ class StateMsg(_Msg):
     warnings: list[str] = Field(default_factory=list)  # degraded services (offline safety banner)
 
 
+class Pointer(_Msg):
+    """The line of the slide being talked about; coordinates are 0..1 of the slide image."""
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    text: str = ""
+
+
 class PlaySentence(_Msg):
     type: Literal["play_sentence"] = "play_sentence"
     play_id: str
@@ -106,6 +115,7 @@ class PlaySentence(_Msg):
     text: str
     url: str
     next_url: str | None = None
+    pointer: Pointer | None = None
 
 
 class PlayClip(_Msg):
@@ -124,6 +134,8 @@ class PlayAnswer(_Msg):
     text: str
     audio_b64: str
     final: bool = False
+    slide_n: int | None = None  # slide being shown while this is spoken (pointer coordinates refer to it)
+    pointer: Pointer | None = None
 
 
 class Pause(_Msg):

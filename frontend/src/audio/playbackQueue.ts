@@ -1,3 +1,11 @@
+export interface Pointer {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  text?: string;
+}
+
 export interface QueueItem {
   playId: string;
   kind: "sentence" | "clip" | "answer";
@@ -6,10 +14,11 @@ export interface QueueItem {
   data?: ArrayBuffer;
   slideN?: number;
   sentenceI?: number;
+  pointer?: Pointer | null;
 }
 
 type Handlers = {
-  onStart: (item: QueueItem) => void;
+  onStart: (item: QueueItem, durationMs: number) => void;
   onEnd: (item: QueueItem, interrupted: boolean) => void;
 };
 
@@ -135,7 +144,7 @@ export class PlaybackQueue {
             timer = window.setTimeout(() => finish(false), Math.max(700, item.text.split(/\s+/).length * 360));
           }
           this.current = { item, src, finish };
-          this.h.onStart(item);
+          this.h.onStart(item, buf ? buf.duration * 1000 : Math.max(700, item.text.split(/\s+/).length * 360));
           src?.start();
         });
       }

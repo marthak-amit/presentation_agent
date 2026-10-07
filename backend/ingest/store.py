@@ -101,6 +101,21 @@ class DeckStore:
     def write_slides(self, deck_id: str, slides: list[dict]) -> None:
         write_json(self.dir(deck_id) / "slides.json", slides)
 
+    def pdf_path(self, deck_id: str) -> Path:
+        return self.dir(deck_id) / "slides.pdf"
+
+    def layout(self, deck_id: str) -> dict:
+        return read_json(self.dir(deck_id) / "layout.json", {}) or {}
+
+    def write_layout(self, deck_id: str, layout: dict) -> None:
+        write_json(self.dir(deck_id) / "layout.json", layout)
+
+    def cursor_map(self, deck_id: str) -> dict:
+        return read_json(self.dir(deck_id) / "cursor.json", {}) or {}
+
+    def write_cursor_map(self, deck_id: str, m: dict) -> None:
+        write_json(self.dir(deck_id) / "cursor.json", m)
+
     def narration(self, deck_id: str) -> list[dict]:
         return read_json(self.dir(deck_id) / "narration.json", []) or []
 

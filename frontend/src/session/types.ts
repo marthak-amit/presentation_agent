@@ -1,3 +1,12 @@
+export interface ActivePointer {
+  key: number; // changes for every new target
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  durationMs: number;
+}
+
 export type PState = "IDLE" | "PRESENTING" | "PAUSED" | "LISTENING" | "ANSWERING" | "END" | "OPEN_QA";
 
 export interface ServerMsg {
@@ -23,6 +32,7 @@ export interface Snapshot {
   micOn: boolean;
   micError: string;
   hand: boolean;
+  pointer: ActivePointer | null;
   questions: { question: string; answer?: string; ts?: string }[];
   unanswered: { question: string; ts?: string }[];
   lastModel: string;
@@ -48,6 +58,7 @@ export const initialSnapshot: Snapshot = {
   micOn: false,
   micError: "",
   hand: false,
+  pointer: null,
   questions: [],
   unanswered: [],
   lastModel: "",

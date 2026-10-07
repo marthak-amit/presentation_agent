@@ -1,4 +1,4 @@
-import { PlaybackQueue, QueueItem } from "../audio/playbackQueue";
+import { PlaybackQueue, Pointer, QueueItem } from "../audio/playbackQueue";
 import { StreamingPlayer } from "../audio/streamingPlayer";
 import { startMic, MicHandle } from "../audio/mic";
 import { initialSnapshot, PState, ServerMsg, Snapshot } from "./types";
@@ -16,10 +16,11 @@ export class PresenterClient {
   private reconnectTimer = 0;
   private lastPos = { slide: 0, sentence: 0 };
   private wasPresenting = false;
+  private pointerKey = 0;
 
   constructor(private deckId: string) {
     this.queue = new PlaybackQueue({
-      onStart: (item) => this.onItemStart(item),
+      onStart: (item, durationMs) => this.onItemStart(item, durationMs),
       onEnd: (item, interrupted) => this.send({ type: "audio_ended", play_id: item.playId, interrupted }),
     });
     this.player = new StreamingPlayer(this.queue);
@@ -134,12 +135,21 @@ export class PresenterClient {
   }
 
   // ---- inbound
-  private onItemStart(item: QueueItem): void {
+  private onItemStart(item: QueueItem, durationMs: number): void {
     const patch: Partial<Snapshot> = {
       prevCaption: this.snap.caption,
       caption: item.text,
       captionKind: item.kind,
     };
+    if (item.kind !== "clip") {
+      // the pointer follows what is being said; no target -> clear the highlight but leave the arrow where it is
+      patch.pointer = item.pointer ? { ...item.pointer, key: ++this.pointerKey, durationMs } : null;
+    }
+    if (item.kind === "answer" && item.slideN !== undefined) {
+      // an answer may be about a slide other than the one we were presenting: show it for the moment
+      patch.slideN = item.slideN;
+      patch.temporarySlide = item.slideN !== this.lastPos.slide;
+    }
     if (item.kind === "sentence" && item.slideN !== undefined) {
       patch.slideN = item.slideN;
       patch.temporarySlide = false;
@@ -168,6 +178,7 @@ export class PresenterClient {
           hand: state === "PAUSED" || state === "LISTENING" ? this.snap.hand : false,
         });
         if (state === "IDLE" || state === "LISTENING") this.set({ caption: "", prevCaption: "", captionKind: "", transcript: "" });
+        if (state === "IDLE") this.set({ pointer: null });
         break;
       }
       case "slide":
@@ -181,6 +192,7 @@ export class PresenterClient {
           url: m.url as string,
           slideN: m.slide_n as number,
           sentenceI: m.sentence_i as number,
+          pointer: (m.pointer as Pointer | null) ?? null,
         });
         if (m.next_url) this.queue.preload(m.next_url as string);
         break;
@@ -188,7 +200,7 @@ export class PresenterClient {
         this.queue.enqueue({ playId: m.play_id as string, kind: "clip", text: m.text as string, url: m.url as string });
         break;
       case "play_answer":
-        this.player.push(m.play_id as string, m.audio_b64 as string, m.text as string);
+        this.player.push(m.play_id as string, m.audio_b64 as string, m.text as string, (m.pointer as Pointer | null) ?? null, (m.slide_n as number | null) ?? null);
         break;
       case "pause":
         void this.queue.fadeOutAndClear((m.fade_ms as number) ?? 150);

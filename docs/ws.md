@@ -37,9 +37,9 @@ IDLE ──start──▶ PRESENTING ──trigger/hand-raise/PTT──▶ PAUSE
 |---|---|---|
 | `session_ready` | `session_id, deck_id, slide_count, presenter, barge_in, services{llm,stt,tts}` | |
 | `state` | `state, reason, slide_n, sentence_i, barge_in, stt` | on every transition. `stt` = `up\|down\|mock` |
-| `play_sentence` | `play_id, slide_n, sentence_i, text, url, next_url?` | narration sentence; `url` is a cached MP3 under `/media/…`. Client shows `slide_n` + caption when playback **starts**, preloads `next_url` |
+| `play_sentence` | `play_id, slide_n, sentence_i, text, url, next_url?, pointer?` | narration sentence; `url` is a cached MP3 under `/media/…`. Client shows `slide_n` + caption when playback **starts**, preloads `next_url` |
 | `play_clip` | `play_id, clip, text, url` | stock clip (`go_ahead, anything_else, continue, filler, followup, open_qa`) under `/stock/…` |
-| `play_answer` | `play_id, index, text, audio_b64, final` | one streamed answer sentence, base64 MP3. Queue them; play in order |
+| `play_answer` | `play_id, index, text, audio_b64, final, slide_n?, pointer?` | one streamed answer sentence, base64 MP3. Queue them; play in order |
 | `pause` | `fade_ms=150, reason` | fade out current audio over `fade_ms` and **clear the queue** |
 | `slide` | `slide_n, temporary` | `temporary=true` = `goto_slide` during an answer; the playhead is unchanged and the origin slide returns on resume |
 | `transcript` | `text, is_final, confidence` | live STT output (interim + final) |
@@ -48,6 +48,16 @@ IDLE ──start──▶ PRESENTING ──trigger/hand-raise/PTT──▶ PAUSE
 | `summary` | `questions[], unanswered[]` | end screen data, refreshed after every question |
 | `error` | `message` | |
 | `pong` | – | |
+
+### Animated pointer
+
+`play_sentence` and `play_answer` may carry `pointer: {x0,y0,x1,y1,text}` – the box of the slide line being talked about,
+normalised 0..1 of the slide image. The client applies it when that item **starts playing**: a mouse arrow glides along a
+curved path to the start of the line, then sweeps along it for the duration of the clip, with a highlighter under the line.
+`pointer: null` = nothing matches (arrow stays where it is). An answer may carry a `slide_n` different from the playhead
+slide when its sentence is about a line of another slide it was drawn from; the client shows that slide until the talk resumes.
+Boxes come from `data/decks/{id}/layout.json` (`pdftotext -bbox-layout` of the LibreOffice PDF) matched to sentences
+(keyword/number/embedding score) in `cursor.json`; answer sentences are matched live.
 
 ### Barge-in sequence (what the client sees)
 

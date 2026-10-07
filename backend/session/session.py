@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
+from ..ingest.cursor import CursorMatcher, build_sentence_map
 from ..llm.prompts import qa_messages
 from ..llm.qa import Failed, Filler, Finished, ModelSwitch, QAEngine, Text, ToolUsed
 from ..rag.store import format_context
@@ -60,6 +61,7 @@ class SessionToolbox:
                 return "Invalid slide number."
             if s.plan is None or not s.plan.has(n):
                 return f"There is no slide {n}."
+            s._answer_slide = n
             await s._send(M.SlideMsg(slide_n=n, temporary=True))
             return f"Now showing slide {n}: {s.plan.title(n)}"
         if name == "resume_presenting":
@@ -100,6 +102,9 @@ class PresenterSession:
         self.unanswered: list[dict] = []
         self.last_trigger = ""
         self.last_model_info: dict = {}
+        self._matcher: CursorMatcher | None = None
+        self._cursor_map: dict = {}
+        self._answer_slide: int | None = None
         self._last_stt_status = "unknown"
 
     # ------------------------------------------------------------------ plumbing
@@ -180,6 +185,9 @@ class PresenterSession:
         if slide_n is not None and self.plan.has(slide_n):
             self.playhead = (slide_n, max(0, sentence_i))
         self.barge_in_enabled = barge_in
+        self._cursor_map = store.cursor_map(deck_id)
+        if not self._cursor_map and store.layout(deck_id):  # deck ingested before the pointer feature
+            self._spawn(self._build_cursor_map(), "cursor-map")
         await self._setup_stt()
         # Warm the stock clips so the first interruption never waits on TTS.
         self._spawn(self._warm_clips(), "warm-clips")
@@ -198,6 +206,56 @@ class PresenterSession:
         else:
             self.stt = FakeSTT(self._on_stt_event)
         await self.stt.start()
+
+    def _get_matcher(self) -> CursorMatcher | None:
+        if self._matcher is None:
+            layout = self.svc.store.layout(self.deck_id)
+            if not layout:
+                return None
+            try:
+                emb = self.svc.kb.embedder
+            except Exception:
+                emb = None
+            self._matcher = CursorMatcher(layout, emb)
+        return self._matcher
+
+    async def _build_cursor_map(self) -> None:
+        def work():
+            m = self._get_matcher()
+            if m is None:
+                return {}
+            cmap = build_sentence_map(m, self.svc.store.narration(self.deck_id))
+            self.svc.store.write_cursor_map(self.deck_id, cmap)
+            return cmap
+
+        try:
+            self._cursor_map = await asyncio.to_thread(work)
+        except Exception as e:
+            log.warning("cursor map failed: %s", e)
+
+    @staticmethod
+    def _pointer(box: dict | None) -> M.Pointer | None:
+        return M.Pointer(x0=box["x0"], y0=box["y0"], x1=box["x1"], y1=box["y1"], text=box.get("text", "")) if box else None
+
+    def _match_pointer(self, slide_n: int, text: str, others: tuple[int, ...] = ()) -> tuple[int, M.Pointer | None]:
+        """Line of the slide being shown that `text` is about. If the sentence is clearly about a line on one of the
+        other slides the answer was drawn from, point there instead (and show that slide)."""
+        m = self._get_matcher()
+        if m is None:
+            return slide_n, None
+        try:
+            here = m.match(slide_n, text)
+            best_slide, best = slide_n, here
+            for o in others:
+                if o == slide_n:
+                    continue
+                hit = m.match(o, text)
+                if hit and hit["score"] >= 0.5 and hit["score"] > (best["score"] + 0.15 if best else 0):
+                    best_slide, best = o, hit
+            return best_slide, self._pointer(best)
+        except Exception as e:  # the pointer must never break speech
+            log.debug("pointer match failed: %s", e)
+            return slide_n, None
 
     async def _warm_clips(self) -> None:
         from ..tts.clips import ensure_all_clips
@@ -373,8 +431,12 @@ class PresenterSession:
         play_id = self.tracker.new_id("s")
         fut = self.tracker.expect(play_id)
         self.echo.speaking(text)
+        try:
+            box = self._cursor_map.get(str(n), [])[i]
+        except (IndexError, TypeError):
+            box = None
         await self._send(M.PlaySentence(play_id=play_id, slide_n=n, sentence_i=i, text=text,
-                                        url=self._sentence_url(n, i), next_url=next_url))
+                                        url=self._sentence_url(n, i), next_url=next_url, pointer=self._pointer(box)))
         await self.tracker.wait(play_id, fut, audio_timeout(path.stat().st_size))
         self.echo.mark_end(time.monotonic())
 
@@ -568,6 +630,7 @@ class PresenterSession:
     async def _answer(self, question: str, t_end: float, trigger: str) -> None:
         assert self.plan is not None
         resume_state = self.state
+        self._answer_slide = self.playhead[0]
         await self._go(S.ANSWERING, "question")
         self.buf.reset()
         self._resume_requested = False
@@ -590,7 +653,7 @@ class PresenterSession:
                     return
                 text, task = item
                 try:
-                    audio, _prov = await task
+                    (audio, _prov), shown, pointer = await task
                 except Exception as e:
                     log.warning("TTS failed for answer sentence: %s", e)
                     continue
@@ -600,13 +663,23 @@ class PresenterSession:
                 if not first_audio:
                     first_audio.append(time.monotonic())
                 await self._send(M.PlayAnswer(play_id=pid, index=len(last_play), text=text,
-                                              audio_b64=base64.b64encode(audio).decode()))
+                                              audio_b64=base64.b64encode(audio).decode(), slide_n=shown, pointer=pointer))
                 last_play.append((pid, fut))
 
         sender_task = asyncio.create_task(sender(), name="answer-sender")
 
+        source_slides = tuple(dict.fromkeys(c.slide_n for c in chunks if c.slide_n > 0))
+
+        async def synth_with_pointer(text: str, shown: int):
+            # TTS and the pointer lookup (embedding) run side by side; neither delays the other
+            audio, (slide, pointer) = await asyncio.gather(
+                self.svc.tts.synth(text), asyncio.to_thread(self._match_pointer, shown, text, source_slides))
+            self._answer_slide = slide
+            return audio, slide, pointer
+
         def speak(text: str) -> None:
-            send_q.put_nowait((text, asyncio.create_task(self.svc.tts.synth(text))))
+            shown = self._answer_slide or self.playhead[0]
+            send_q.put_nowait((text, asyncio.create_task(synth_with_pointer(text, shown))))
 
         streamer = SentenceStreamer()
         toolbox = SessionToolbox(self)

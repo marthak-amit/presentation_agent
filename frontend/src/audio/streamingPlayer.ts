@@ -1,4 +1,4 @@
-import { PlaybackQueue } from "./playbackQueue";
+import { PlaybackQueue, Pointer } from "./playbackQueue";
 
 function b64ToBuffer(b64: string): ArrayBuffer {
   const bin = atob(b64);
@@ -11,7 +11,7 @@ function b64ToBuffer(b64: string): ArrayBuffer {
 export class StreamingPlayer {
   constructor(private queue: PlaybackQueue) {}
 
-  push(playId: string, b64: string, text: string): void {
-    this.queue.enqueue({ playId, kind: "answer", text, data: b64ToBuffer(b64) });
+  push(playId: string, b64: string, text: string, pointer?: Pointer | null, slideN?: number | null): void {
+    this.queue.enqueue({ playId, kind: "answer", text, data: b64ToBuffer(b64), pointer, slideN: slideN ?? undefined });
   }
 }

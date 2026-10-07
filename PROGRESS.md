@@ -116,3 +116,10 @@ Legend: **REAL** = talks to the real service when its key is present; **MOCK** =
 - Wake phrase changed to **"Hello One"** (also "Hello 1", "hello won/wan"); strict match with word boundaries, so "hello once", "hello on", "hello 10", "hello all" do not fire. "Hello AI" no longer triggers.
 - While a question is asked the talk is stopped (audio fades out in 150 ms, narration loop cancelled, nothing plays until the answer is done) and the slide shows a pulsing **"Listening… ask your question"** banner with the live transcript; **"Answering…"** while the answer plays. Verified in Chromium.
 - Known flake: `test_debug_ws_streams_events_and_routes_simulated_speech` failed once in ~5 full runs under load (passes alone); not investigated further.
+
+## Follow-up 3: human-like pointer
+- New: an animated mouse arrow follows the line being talked about, during narration **and** answers. Curved ease-in-out path, small tremor, a "click" on arrival, then it glides along the line at speech pace with a highlighter. Component: `frontend/src/components/SlideCursor.tsx`.
+- Backend: `ingest/layout.py` (line boxes from the LibreOffice PDF via `pdftotext -bbox-layout`; placeholder geometry otherwise) → `layout.json`; `ingest/cursor.py` (sentence→line: IDF-weighted keyword coverage with number-word normalisation + embedding) → `cursor.json`; pointer rides on `play_sentence` / `play_answer`. Answers can point at a line on another slide they were retrieved from (slide shown temporarily).
+- **Decks uploaded before this change have no layout** → re-upload (or they just get no pointer).
+- Tests: `tests/test_pointer.py` (15). Verified in Chromium: arrow travels smoothly, highlight on landing, works during answers.
+- Known: hidden slides are skipped by LibreOffice's PDF export, which would shift page↔slide numbers (pre-existing limitation).

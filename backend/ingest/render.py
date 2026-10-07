@@ -58,12 +58,14 @@ def placeholder_png(path: Path, n: int, title: str, body: str, size=(1280, 720))
     img.save(path, "PNG")
 
 
-def render_slides(pptx: Path, slides_dir: Path, slide_meta: list[dict]) -> str:
-    """Render PNGs for every slide. Returns 'libreoffice' or 'placeholder'."""
+def render_slides(pptx: Path, slides_dir: Path, slide_meta: list[dict], pdf_out: Path | None = None) -> str:
+    """Render PNGs for every slide. Returns 'libreoffice' or 'placeholder'. Keeps the PDF at `pdf_out` if given."""
     try:
         with tempfile.TemporaryDirectory(prefix="render_") as tmp:
             pdf = pptx_to_pdf(pptx, Path(tmp))
             count = pdf_to_pngs(pdf, slides_dir)
+            if pdf_out is not None:
+                shutil.copy(pdf, pdf_out)
         if count >= len(slide_meta):
             return "libreoffice"
         log.warning("render produced %d pages for %d slides; filling gaps", count, len(slide_meta))

@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, DeckInfo } from "../api";
 import { PresenterClient } from "../session/client";
+import SlideCursor from "../components/SlideCursor";
 
 export default function Presenter() {
   const { deckId = "" } = useParams();
   const [deck, setDeck] = useState<DeckInfo | null>(null);
   const [err, setErr] = useState("");
   const [simText, setSimText] = useState("");
+  const imgRef = useRef<HTMLImageElement>(null);
   const client = useMemo(() => new PresenterClient(deckId), [deckId]);
   const snap = useSyncExternalStore(
     (cb) => client.subscribe(cb),
@@ -64,7 +66,8 @@ export default function Presenter() {
       )}
 
       <div className="stage">
-        <img className="slide" src={slide.image_url} alt={slide.title} data-testid="slide-img" />
+        <img ref={imgRef} className="slide" src={slide.image_url} alt={slide.title} data-testid="slide-img" />
+        <SlideCursor imgRef={imgRef} pointer={snap.pointer} visible={!idle && !ended} />
         {listening && (
           <div className="listening" data-testid="listening">
             <span className="pulse" /> Listening… ask your question
