@@ -11,7 +11,9 @@ sys.path.insert(0, str(ROOT))
 from backend.config import Settings  # noqa: E402
 from backend.ingest.store import DeckStore  # noqa: E402
 from backend.llm.client import FakeLLM  # noqa: E402
-from backend.services import Services  # noqa: E402
+from backend.services import Services, attach_tts  # noqa: E402
+from backend.tts.chain import FallbackTTS  # noqa: E402
+from backend.tts.fake import FakeTTS  # noqa: E402
 
 SAMPLE = ROOT / "tests" / "sample_deck.pptx"
 
@@ -41,4 +43,5 @@ def settings(tmp_path) -> Settings:
 @pytest.fixture
 def svc(settings) -> Services:
     sv = Services(settings=settings, llm=FakeLLM("Amit", delay=0), store=DeckStore(settings), force_hash_embedder=True)
+    attach_tts(sv, FallbackTTS([FakeTTS(speed=25.0)]))  # silent clips ~25x shorter than real speech
     return sv

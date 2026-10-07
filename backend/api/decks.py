@@ -116,3 +116,18 @@ async def search(deck_id: str, q: str, request: Request, k: int = 3):
         raise HTTPException(404, "deck not found")
     chunks = await asyncio.to_thread(svc.kb.search, deck_id, q, k)
     return [{"text": c.text, "slide_n": c.slide_n, "source": c.source, "distance": c.distance} for c in chunks]
+
+
+@router.post("/decks/{deck_id}/audio")
+async def regenerate_audio(deck_id: str, request: Request):
+    """(Re)run audio pre-generation; cached files are never regenerated."""
+    from ..tts.pregen import pregenerate_deck_audio
+
+    svc = _svc(request)
+    if not svc.store.exists(deck_id) or svc.store.meta(deck_id).get("status") != "ready":
+        raise HTTPException(404, "deck not ready")
+    task = asyncio.create_task(pregenerate_deck_audio(svc, deck_id))
+    tasks: set = request.app.state.tasks
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+    return {"deck_id": deck_id, "status": "started"}

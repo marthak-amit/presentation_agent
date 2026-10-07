@@ -40,7 +40,20 @@ class Services:
         raise AttributeError(item)
 
 
+def attach_tts(svc: Services, tts=None) -> Services:
+    """Wire TTS + audio cache (real chain by default; tests pass a FallbackTTS around FakeTTS)."""
+    from .tts.cache import AudioCache
+    from .tts.chain import make_tts
+
+    tts = tts or make_tts(svc.settings)
+    svc.extras["tts"] = tts
+    svc.extras["audio"] = AudioCache(tts)
+    return svc
+
+
 def build_services(settings: Settings | None = None) -> Services:
     settings = settings or Settings.from_env()
     settings.ensure_dirs()
-    return Services(settings=settings, llm=make_llm(settings), store=DeckStore(settings))
+    svc = Services(settings=settings, llm=make_llm(settings), store=DeckStore(settings))
+    attach_tts(svc)
+    return svc
