@@ -4,7 +4,7 @@ PYTHON ?= python3
 PY := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo $(PYTHON))
 BACKEND_PORT ?= 8000
 
-.PHONY: dev backend frontend install test sample build env check
+.PHONY: dev backend frontend install test sample build env check revoice
 
 env:
 	@test -f .env || (cp .env.example .env && echo "created .env from .env.example - add your API keys")
@@ -35,6 +35,12 @@ sample:
 # Same checks as the in-app setup page, from the terminal (backend must be running)
 check:
 	@curl -s localhost:$(BACKEND_PORT)/preflight | $(PY) -c "import json,sys; r=json.load(sys.stdin); print('overall:', r['overall']); [print(f\"  {c['status']:5} {c['label']}: {c['detail']}\") for c in r['checks']]"
+
+# Re-generate the voice of every ready deck (after changing ELEVENLABS_VOICE_ID). Backend must be running.
+revoice:
+	@for id in $$(curl -s localhost:$(BACKEND_PORT)/decks | $(PY) -c "import json,sys; [print(d['deck_id']) for d in json.load(sys.stdin) if d['status']=='ready']"); do \
+	  echo "re-voicing deck $$id"; curl -s -X POST localhost:$(BACKEND_PORT)/decks/$$id/audio; echo; \
+	done; echo "Generation runs in the background; watch 'Voice:' on the deck card (Upload page)."
 
 test:
 	$(PY) -m pytest -q
