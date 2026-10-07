@@ -20,6 +20,7 @@ from ..stt.deepgram import DeepgramSTT
 from ..stt.fake import FakeSTT
 from ..tts.clips import clip_text, ensure_clip
 from . import messages as M
+from .commands import Command, parse_command
 from .barge_in import (ALL_TRIGGERS, STOP_TRIGGERS, BargeDecision, BargeInDetector, EchoGuard, UtteranceBuffer,
                        is_dismissal, strip_leading_trigger)
 from .plan import DeckPlan
@@ -424,7 +425,12 @@ class PresenterSession:
             self.playhead = nxt
 
     def _sentence_url(self, n: int, i: int) -> str:
-        return f"/media/{self.deck_id}/audio/{n}/s{i}.mp3"
+        """Versioned by file mtime: after a script edit the browser must not replay the old cached audio."""
+        try:
+            v = self.svc.store.audio_path(self.deck_id, n, i).stat().st_mtime_ns // 1000
+        except OSError:
+            v = 0
+        return f"/media/{self.deck_id}/audio/{n}/s{i}.mp3?v={v}"
 
     async def _play_sentence(self, n: int, i: int, text: str) -> None:
         assert self.plan is not None
@@ -501,6 +507,15 @@ class PresenterSession:
             elif self.detector.last_reject:
                 rej, self.detector.last_reject = self.detector.last_reject, None
                 self._debug({"type": "barge_in_ignored", "trigger": rej[0], "reason": rej[1], "text": text})
+        elif st == S.PAUSED:
+            # paused by the button or by a voice command: the wake phrase can still start a question / "continue"
+            if self._qa_task is None and self.barge_in_enabled and self.pause_reason in ("user", "voice"):
+                d = self.detector.check(text, conf, received_at=now, answering=True)
+                if d is not None and d.match.trigger not in STOP_TRIGGERS:
+                    self.buf.seed_from_trigger(text, d.match.start_char)
+                    await self._send(M.BargeInHit(trigger=d.match.trigger, text=text, score=d.match.score,
+                                                  detect_ms=round(d.detect_ms, 2)))
+                    self._start_qa("interrupt", skip_go_ahead=d.treat_as_question, trigger=d.match.trigger)
         elif st == S.ANSWERING:
             # the audience can cut an answer short: "Okay Agent ..." / "wait" / "stop"
             task = self._answer_task
@@ -537,7 +552,8 @@ class PresenterSession:
         if not raw or self.echo.is_echo(raw):
             return False
         q = strip_leading_trigger(raw)
-        if len(q.split()) < self.cfg.utterance_min_words:
+        if len(q.split()) < self.cfg.utterance_min_words and not (
+                self.plan is not None and parse_command(q, len(self.plan))):
             return False  # lone trigger phrase ("I have a question") or noise
         self._qa_q.put_nowait(("question", q, t_end))
         return True
@@ -640,6 +656,12 @@ class PresenterSession:
                 got = await self._next_question(self.cfg.listen_timeout_s)
                 while got is not None:
                     q, t_end = got
+                    outcome = await self._try_command(q)
+                    if outcome == "paused":
+                        self._qa_task = None
+                        return
+                    if outcome == "resume":
+                        break
                     cut = await self._run_answer(q, t_end, trigger)
                     if cut is not None:  # the audience interrupted the answer
                         got = await self._after_interrupt(cut, self.cfg.followup_wait_s)
@@ -659,6 +681,13 @@ class PresenterSession:
                     got = got or await self._next_question(None)
                     if got is None:
                         continue
+                    outcome = await self._try_command(got[0])
+                    if outcome == "resume":
+                        await self._resume_after_qa()
+                        return
+                    if outcome == "paused":
+                        self._qa_task = None
+                        return
                     cut = await self._run_answer(got[0], got[1], "open_qa")
                     got = await self._after_interrupt(cut, None) if cut is not None else None
         except asyncio.CancelledError:
@@ -667,6 +696,48 @@ class PresenterSession:
             log.exception("Q&A loop crashed")
             if mode == "interrupt" and not self.closed:
                 await self._resume_after_qa()
+
+    async def _try_command(self, q: str) -> str | None:
+        """Run a spoken navigation command. Returns 'resume' (playhead set, go present), 'paused', or None."""
+        if self.plan is None:
+            return None
+        cmd = parse_command(q, len(self.plan))
+        if cmd is None:
+            return None
+        plan = self.plan
+        cur = self.playhead[0]
+        target: int | None = None
+        if cmd.kind == "next":
+            target = plan.next_slide(cur)
+        elif cmd.kind == "prev":
+            target = plan.prev_slide(cur)
+        elif cmd.kind == "goto":
+            target = cmd.slide
+        elif cmd.kind == "first" or cmd.kind == "restart":
+            target = plan.first
+        elif cmd.kind == "last":
+            target = plan.last
+        elif cmd.kind == "repeat_slide":
+            target = cur
+        await self._send(M.VoiceCommand(kind=cmd.kind, text=q, slide_n=target))
+        self._debug({"type": "voice_command", "kind": cmd.kind, "slide": target, "text": q})
+        if cmd.kind == "pause":
+            if self.state == S.OPEN_QA:
+                return None
+            await self._play_clip("ack")
+            self.pause_reason = "voice"
+            await self._send(M.Pause(fade_ms=150, reason="voice"))
+            self.tracker.cancel_all()
+            await self._go(S.PAUSED, "voice_command")
+            return "paused"
+        if cmd.kind == "resume":
+            await self._play_clip("continue", wait=True)
+        else:
+            await self._play_clip("ack")
+        if target is not None:
+            self.playhead = (target, 0)
+        self._resume_requested = True
+        return "resume"
 
     async def _after_interrupt(self, cut: BargeDecision, followup_wait: float | None):
         """After the audience cut an answer short: 'stop' -> ask if that answered it; anything else -> let them speak."""

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, DeckInfo } from "../api";
 import { PresenterClient } from "../session/client";
@@ -10,6 +10,9 @@ export default function Presenter() {
   const [err, setErr] = useState("");
   const [simText, setSimText] = useState("");
   const imgRef = useRef<HTMLImageElement>(null);
+  const rootRef = useRef<HTMLElement>(null);
+  const [full, setFull] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const client = useMemo(() => new PresenterClient(deckId), [deckId]);
   const snap = useSyncExternalStore(
     (cb) => client.subscribe(cb),
@@ -24,6 +27,66 @@ export default function Presenter() {
     return () => client.close();
   }, [client]);
 
+  useEffect(() => {
+    const onFs = () => setFull(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  useEffect(() => {
+    if (snap.startedAt === null) {
+      setElapsed(0);
+      return;
+    }
+    const t = window.setInterval(() => setElapsed(Math.floor((Date.now() - (snap.startedAt ?? Date.now())) / 1000)), 1000);
+    return () => window.clearInterval(t);
+  }, [snap.startedAt]);
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void rootRef.current?.requestFullscreen?.();
+  }, []);
+
+  // keyboard control for live use: Space pause/resume, arrows prev/next, F fullscreen, M mic, B voice commands
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const st = client.snap.state;
+      switch (e.key) {
+        case " ":
+          e.preventDefault();
+          if (st === "IDLE") void client.start();
+          else if (st === "PRESENTING") client.control("pause");
+          else if (st === "PAUSED" || st === "LISTENING") client.control("resume");
+          break;
+        case "ArrowRight":
+          client.control("next");
+          break;
+        case "ArrowLeft":
+          client.control("prev");
+          break;
+        case "f":
+        case "F":
+          toggleFullscreen();
+          break;
+        case "m":
+        case "M":
+          if (client.snap.micOn) client.stopMic();
+          else void client.enableMic();
+          break;
+        case "b":
+        case "B":
+          client.setBargeIn(!client.snap.bargeIn);
+          break;
+        default:
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [client, toggleFullscreen]);
+
   if (err) return <main className="page error">{err}</main>;
   if (!deck) return <main className="page">Loading…</main>;
   if (deck.status !== "ready") return <main className="page">Deck is still processing ({deck.stage}). <Link to="/">Back</Link></main>;
@@ -37,7 +100,7 @@ export default function Presenter() {
   const answering = snap.state === "ANSWERING";
 
   return (
-    <main className="page" data-state={snap.state}>
+    <main ref={rootRef} className={`page presenter-root${full ? " full" : ""}`} data-state={snap.state}>
       <div className="row" style={{ justifyContent: "space-between" }}>
         <div className="row" style={{ margin: 0 }}>
           <span className={`badge ${snap.state}`} data-testid="state">{snap.state}</span>
@@ -54,9 +117,18 @@ export default function Presenter() {
             {snap.services.llm ?? "?"}
           </span>
         </div>
-        <Link to={`/debug/${deckId}`} target="_blank">Debug ↗</Link>
+        <div className="row" style={{ margin: 0 }}>
+          {snap.startedAt !== null && <span className="muted mono" data-testid="timer">⏱ {String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</span>}
+          <button onClick={toggleFullscreen} title="Fullscreen (F)" data-testid="fullscreen">{full ? "Exit full screen" : "⛶ Full screen"}</button>
+          <Link to={`/script/${deckId}`}>Edit script</Link>
+          <Link to={`/debug/${deckId}`} target="_blank">Debug ↗</Link>
+        </div>
       </div>
 
+      <div className="progress" title={`slide ${slide.n} of ${deck.slides.length}`}>
+        <div style={{ width: `${(slide.n / deck.slides.length) * 100}%` }} />
+      </div>
+      {snap.notice && <div className="toast" key={snap.notice.key} data-testid="notice">{snap.notice.text}</div>}
       {snap.warnings.length > 0 && (
         <div className="warn" data-testid="warnings">
           {snap.warnings.map((w) => (
@@ -83,7 +155,12 @@ export default function Presenter() {
             <ol>{snap.questions.map((q, i) => <li key={i}>{q.question}</li>)}</ol>
             <h3>Unanswered — follow up ({snap.unanswered.length})</h3>
             <ol>{snap.unanswered.map((q, i) => <li key={i}>{q.question}</li>)}</ol>
-            <button onClick={() => client.control("restart")}>Present again</button>
+            <div className="row">
+              <button onClick={() => client.control("restart")}>Present again</button>
+              {snap.sessionId && snap.questions.length > 0 && (
+                <a className="btn" href={`/sessions/${snap.sessionId}/export.md`} download data-testid="export">⬇ Download Q&amp;A report (.md)</a>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -94,7 +171,16 @@ export default function Presenter() {
         {snap.transcript && <div className="muted mono">🎤 {snap.transcript}</div>}
       </div>
 
-      <div className="row">
+      <div className="thumbs" data-testid="thumbs">
+        {deck.slides.map((sl) => (
+          <button key={sl.n} className={`thumb${sl.n === slide.n ? " cur" : ""}`} onClick={() => client.goto(sl.n)} title={`${sl.n}. ${sl.title}`}>
+            <img src={sl.image_url} alt="" loading="lazy" />
+            <span>{sl.n}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="row controls">
         {idle ? (
           <button className="primary" onClick={() => void client.start()} disabled={!snap.ready} data-testid="start">▶ Start presenting</button>
         ) : (
@@ -131,6 +217,14 @@ export default function Presenter() {
         🎤 To ask a question, say <b>“Okay Agent”</b> {snap.micOn ? "(listening…)" : "— enable the microphone first"}
         {!snap.bargeIn && " · voice commands are OFF: use Hold to talk"}
       </p>
+      <details className="hint-box">
+        <summary className="muted">Voice commands &amp; keyboard shortcuts</summary>
+        <p className="muted">
+          After <b>“Okay Agent”</b>: ask anything · “next slide” · “previous slide” · “go to slide 3” · “pause” · “continue” · “repeat this slide” · “start over”.
+          While it answers: say “Okay Agent”, “wait” or “stop” to cut in.
+        </p>
+        <p className="muted">Keys: <kbd>Space</kbd> pause/resume · <kbd>←</kbd>/<kbd>→</kbd> slides · <kbd>F</kbd> full screen · <kbd>M</kbd> mic · <kbd>B</kbd> voice commands on/off</p>
+      </details>
       {snap.micError && <p className="error">{snap.micError}</p>}
       {snap.error && <p className="error">{snap.error}</p>}
 

@@ -45,6 +45,7 @@ IDLE ──start──▶ PRESENTING ──trigger/hand-raise/PTT──▶ PAUSE
 | `transcript` | `text, is_final, confidence` | live STT output (interim + final) |
 | `barge_in_hit` | `trigger, text, score, detect_ms, source` | `source`: `speech\|hand_raise\|ptt` |
 | `model_info` | `model, first_token_ms, first_audio_ms, total_ms, fallback_used, question` | after each answer (and with `fallback_used` when the chain switches model). Times are measured from the end of the question (UtteranceEnd) |
+| `voice_command` | `kind, text, slide_n?` | a spoken navigation command was understood and executed (`next, prev, goto, first, last, restart, repeat_slide, pause, resume`) |
 | `summary` | `questions[], unanswered[]` | end screen data, refreshed after every question |
 | `error` | `message` | |
 | `pong` | – | |
@@ -76,3 +77,17 @@ Boxes come from `data/decks/{id}/layout.json` (`pdftotext -bbox-layout` of the L
 Server → client: `{"session_id": "...", "ts": 1234.5, "event": {…any /ws/session server message…}}`
 (audio payloads are replaced by a size placeholder). On connect the last ~200 events are replayed.
 Client → server: `{"type":"sim_transcript","session_id":"…","text":"…","is_final":true,"utterance_end":true}` is routed to that session.
+
+## REST additions
+
+| route | purpose |
+|---|---|
+| `GET /preflight` · `GET /preflight/voice` | setup check (keys, models, tools) · a sentence in the configured voice |
+| `PUT /decks/{id}/narration/{n}` `{text | sentences}` | save the script of slide n (re-indexes, refreshes pointer map, voices changed sentences) |
+| `POST /decks/{id}/narration/{n}/regenerate` `{instruction?, tone?, length?}` | AI rewrite of slide n |
+| `POST /decks` form fields `tone`, `length` | narration style at upload |
+| `DELETE /decks/{id}` | delete deck, audio and index |
+| `GET /sessions/{id}/export.md` | Q&A report (Markdown download) |
+
+`pause.reason` values: `user, barge_in, hand_raise, ptt, voice, interrupt, jump, restart, skip_qa`.
+`barge_in_hit.source`: `speech | hand_raise | ptt | interrupt` (`interrupt` = the audience cut an answer short).

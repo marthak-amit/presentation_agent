@@ -3,6 +3,7 @@ import Upload from "./pages/Upload";
 import Presenter from "./pages/Presenter";
 import Debug from "./pages/Debug";
 import Check from "./pages/Check";
+import Script from "./pages/Script";
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Upload />} />
         <Route path="/present/:deckId" element={<Presenter />} />
+        <Route path="/script/:deckId" element={<Script />} />
         <Route path="/check" element={<Check />} />
         <Route path="/debug" element={<Debug />} />
         <Route path="/debug/:deckId" element={<Debug />} />

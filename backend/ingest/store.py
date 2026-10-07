@@ -68,11 +68,12 @@ class DeckStore:
         return self.dir(deck_id) / "audio" / str(n) / f"s{i}.mp3"
 
     # meta -------------------------------------------------------------------
-    def create(self, name: str) -> str:
+    def create(self, name: str, tone: str = "conversational", length: str = "standard") -> str:
         deck_id = self.new_id()
         self.dir(deck_id).mkdir(parents=True, exist_ok=True)
         self.write_meta(deck_id, {"deck_id": deck_id, "name": name, "status": "processing", "stage": "uploaded",
-                                  "progress": 0.0, "error": None, "audio": {"done": 0, "total": 0}, "docs": []})
+                                  "progress": 0.0, "error": None, "audio": {"done": 0, "total": 0}, "docs": [],
+                                  "tone": tone, "length": length})
         return deck_id
 
     def meta(self, deck_id: str) -> dict:
@@ -121,3 +122,8 @@ class DeckStore:
 
     def write_narration(self, deck_id: str, narration: list[dict]) -> None:
         write_json(self.dir(deck_id) / "narration.json", narration)
+
+    def delete(self, deck_id: str) -> None:
+        import shutil
+
+        shutil.rmtree(self.dir(deck_id), ignore_errors=True)

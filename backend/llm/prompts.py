@@ -9,7 +9,8 @@ Write what {presenter} will SAY out loud for one slide.
 Rules:
 - First person, as {presenter}. Conversational and natural, like talking to colleagues.
 - Whenever the notes or slide use a personal name for the speaker, say {presenter} instead. Never use any other name for yourself.
-- 120 to 180 words (about 45-75 seconds when spoken).
+- {length_rule}
+- Tone: {tone_rule}
 - The speaker notes are the PRIMARY source. Use slide text only to fill gaps. Never invent facts or numbers.
 - Plain spoken prose only: no markdown, no bullet points, no lists, no headings, no stage directions, no emoji.
 - Never say "on this slide", "this slide shows", "as you can see on the slide", or read the slide title aloud as a title.
@@ -33,6 +34,19 @@ Rules:
 - Do not start with filler like "Great question"; just answer."""
 
 
+TONES = {
+    "conversational": "conversational and warm, like talking to colleagues over coffee.",
+    "formal": "polished and professional, suitable for executives; no slang.",
+    "energetic": "upbeat and energetic, enthusiastic without hype; short punchy sentences.",
+    "storytelling": "narrative: open with a hook or a small story, then land the point.",
+}
+LENGTHS = {
+    "short": "70 to 110 words (about 30-45 seconds when spoken).",
+    "standard": "120 to 180 words (about 45-75 seconds when spoken).",
+    "long": "190 to 260 words (about 80-100 seconds when spoken).",
+}
+
+
 @dataclass
 class SlideBrief:
     n: int
@@ -45,7 +59,8 @@ class SlideBrief:
     next_body: str = ""
 
 
-def narration_messages(presenter: str, s: SlideBrief) -> list[dict]:
+def narration_messages(presenter: str, s: SlideBrief, tone: str = "conversational", length: str = "standard",
+                       instruction: str = "", previous: str = "") -> list[dict]:
     if s.n == 1:
         position_rule = f"This is the first slide: open with a brief warm greeting and introduce yourself as {presenter}."
     elif s.n == s.total:
@@ -55,7 +70,9 @@ def narration_messages(presenter: str, s: SlideBrief) -> list[dict]:
     next_hint = (
         f"leading into: {s.next_title}" if s.next_title else "closing the talk"
     )
-    system = NARRATION_SYSTEM.format(presenter=presenter, position_rule=position_rule, next_hint=next_hint)
+    system = NARRATION_SYSTEM.format(presenter=presenter, position_rule=position_rule, next_hint=next_hint,
+                                     tone_rule=TONES.get(tone, TONES["conversational"]),
+                                     length_rule=LENGTHS.get(length, LENGTHS["standard"]))
     user = (
         f"[POSITION]{s.n}/{s.total}[/POSITION]\n"
         f"[PRESENTER]{presenter}[/PRESENTER]\n"
@@ -66,6 +83,11 @@ def narration_messages(presenter: str, s: SlideBrief) -> list[dict]:
         f"[NEXT_TITLE]{s.next_title or '(end of talk)'}[/NEXT_TITLE]\n"
         f"[NEXT_BODY]\n{s.next_body or ''}\n[/NEXT_BODY]\n"
     )
+    if previous:
+        user += f"[CURRENT_SCRIPT]\n{previous}\n[/CURRENT_SCRIPT]\n"
+    if instruction:
+        user += (f"[EDITOR_INSTRUCTION]{instruction}[/EDITOR_INSTRUCTION]\n"
+                 "Rewrite the script following the editor's instruction, keeping every rule above.\n")
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 

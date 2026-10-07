@@ -57,7 +57,9 @@ async def run_ingest(svc: Services, deck_id: str) -> None:
             store.update_meta(deck_id, progress=round(0.25 + 0.6 * done / total, 3), stage=f"narration {done}/{total}")
 
         # Sequential on purpose: Groq free tier is rate limited.
-        narration = await build_narration(svc.llm, st, slides, progress=on_progress)
+        meta0 = store.meta(deck_id)
+        narration = await build_narration(svc.llm, st, slides, progress=on_progress,
+                                          tone=meta0.get("tone", "conversational"), length=meta0.get("length", "standard"))
         store.write_narration(deck_id, narration)
 
         try:  # pointer targets are a nicety: never fail ingest over them

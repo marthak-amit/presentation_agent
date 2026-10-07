@@ -171,7 +171,7 @@ def test_websocket_end_to_end(svc):
                 break
             time.sleep(0.1)
         assert d["status"] == "ready" and d["audio"]["done"] == d["audio"]["total"], d
-        assert d["slides"][0]["audio_urls"][0].endswith("/audio/1/s0.mp3")
+        assert d["slides"][0]["audio_urls"][0].split("?")[0].endswith("/audio/1/s0.mp3")
         with http.websocket_connect("/ws/session") as ws:
             ws.send_json({"type": "bogus"})
             assert ws.receive_json()["type"] == "error"
@@ -227,3 +227,49 @@ async def test_elevenlabs_and_aura_request_shapes(settings):
     bad = ElevenLabsTTS(replace(s, elevenlabs_voice_id="bad"), client)
     with pytest.raises(RuntimeError, match="401"):
         await bad.synth("x")
+
+
+async def test_elevenlabs_retries_transient_errors_but_not_auth(settings, monkeypatch):
+    from dataclasses import replace
+
+    import httpx
+
+    from backend.tts.elevenlabs import ElevenLabsTTS
+
+    calls = []
+
+    def flaky(req):
+        calls.append(1)
+        if len(calls) < 3:
+            return httpx.Response(429, headers={"retry-after": "0"}, json={"detail": "too many concurrent requests"})
+        return httpx.Response(200, content=b"\xff\xfb\x90\x00" + bytes(500))
+
+    s = replace(settings, elevenlabs_api_key="k", elevenlabs_voice_id="v", elevenlabs_model_id="m")
+    tts = ElevenLabsTTS(s, httpx.AsyncClient(transport=httpx.MockTransport(flaky)))
+    monkeypatch.setattr(ElevenLabsTTS, "RETRY_DELAYS", (0.0, 0.0))
+    assert len(await tts.synth("hello")) > 200 and len(calls) == 3
+
+    calls.clear()
+    bad = ElevenLabsTTS(s, httpx.AsyncClient(transport=httpx.MockTransport(lambda r: (calls.append(1), httpx.Response(401, json={}))[1])))
+    with pytest.raises(RuntimeError, match="401"):
+        await bad.synth("hello")
+    assert len(calls) == 1  # a bad key is not retried
+
+    calls.clear()
+    down = ElevenLabsTTS(s, httpx.AsyncClient(transport=httpx.MockTransport(lambda r: (calls.append(1), httpx.Response(503, json={}))[1])))
+    with pytest.raises(RuntimeError, match="503"):
+        await down.synth("hello")
+    assert len(calls) == 3  # 1 try + 2 retries, then the chain falls back
+
+
+async def test_changed_audio_gets_a_new_url_so_browsers_do_not_replay_stale_audio(svc):
+    deck_id = await make_ready_deck(svc)
+    c = FakeClient(svc, play_s=0.005)
+    await c.open(deck_id)
+    u1 = c.session._sentence_url(1, 0)
+    import os
+
+    p = svc.store.audio_path(deck_id, 1, 0)
+    os.utime(p, ns=(p.stat().st_atime_ns, p.stat().st_mtime_ns + 5_000_000))
+    assert c.session._sentence_url(1, 0) != u1 and "?v=" in u1
+    await c.close()

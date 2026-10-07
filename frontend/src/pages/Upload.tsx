@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, DeckInfo, DeckSummary } from "../api";
 
 export default function Upload() {
@@ -10,6 +10,8 @@ export default function Upload() {
   const [busy, setBusy] = useState(false);
   const [docMsg, setDocMsg] = useState("");
   const [drag, setDrag] = useState(false);
+  const [tone, setTone] = useState("conversational");
+  const [length, setLength] = useState("standard");
   const timer = useRef<number | undefined>(undefined);
 
   const refreshList = useCallback(() => api.listDecks().then(setDecks).catch(() => undefined), []);
@@ -38,7 +40,7 @@ export default function Upload() {
     setDeck(null);
     setBusy(true);
     try {
-      const { deck_id } = await api.uploadDeck(f);
+      const { deck_id } = await api.uploadDeck(f, tone, length);
       await poll(deck_id);
     } catch (e) {
       setError(String(e));
@@ -66,6 +68,26 @@ export default function Upload() {
       <p className="muted">
         Upload a .pptx. We render the slides, write a first-person narration from your speaker notes, and index everything for live Q&amp;A.
       </p>
+      <div className="row">
+        <label className="muted">
+          Tone{" "}
+          <select value={tone} onChange={(e) => setTone(e.target.value)} data-testid="tone">
+            <option value="conversational">Conversational</option>
+            <option value="formal">Formal</option>
+            <option value="energetic">Energetic</option>
+            <option value="storytelling">Storytelling</option>
+          </select>
+        </label>
+        <label className="muted">
+          Length per slide{" "}
+          <select value={length} onChange={(e) => setLength(e.target.value)} data-testid="length">
+            <option value="short">Short (~30-45 s)</option>
+            <option value="standard">Standard (~45-75 s)</option>
+            <option value="long">Long (~80-100 s)</option>
+          </select>
+        </label>
+        <Link to="/check" className="muted">Check setup ↗</Link>
+      </div>
       <label
         className={`drop ${drag ? "drag" : ""}`}
         onDragOver={(e) => {
@@ -100,11 +122,18 @@ export default function Upload() {
                 <button className="primary" onClick={() => nav(`/present/${deck.deck_id}`)}>
                   Open presenter
                 </button>
+                <button onClick={() => nav(`/script/${deck.deck_id}`)}>Edit script</button>
                 <label className="btn">
                   Add reference docs (pdf/txt/md)
                   <input type="file" multiple accept=".pdf,.txt,.md" hidden onChange={(e) => void onDocs(e.target.files)} />
                 </label>
               </div>
+              {(deck.audio.fake ?? 0) > 0 && (
+                <p className="warn">
+                  ⚠ {deck.audio.fake} sentence(s) fell back to silent mock audio because the voice service failed.{" "}
+                  <button onClick={() => void api.retryAudio(deck.deck_id).then(() => void poll(deck.deck_id))}>Retry voice generation</button>
+                </p>
+              )}
               {docMsg && <p className="muted">{docMsg}</p>}
               {deck.docs.length > 0 && <p className="muted">Docs: {deck.docs.map((d) => d.name).join(", ")}</p>}
             </>
@@ -120,7 +149,19 @@ export default function Upload() {
               <li key={d.deck_id}>
                 <span>{d.name}</span>
                 <span className="muted">{d.status}</span>
-                {d.status === "ready" ? <button onClick={() => nav(`/present/${d.deck_id}`)}>Present</button> : <span />}
+                <span className="row" style={{ margin: 0 }}>
+                  {d.status === "ready" && <button onClick={() => nav(`/present/${d.deck_id}`)}>Present</button>}
+                  {d.status === "ready" && <button onClick={() => nav(`/script/${d.deck_id}`)}>Script</button>}
+                  <button
+                    className="danger-ghost"
+                    title="Delete this deck"
+                    onClick={() => {
+                      if (window.confirm(`Delete "${d.name}" and its audio?`)) void api.deleteDeck(d.deck_id).then(refreshList);
+                    }}
+                  >
+                    🗑
+                  </button>
+                </span>
               </li>
             ))}
           </ul>

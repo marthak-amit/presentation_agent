@@ -192,6 +192,14 @@ class ModelInfo(_Msg):
     question: str = ""
 
 
+class VoiceCommand(_Msg):
+    """A spoken navigation command that was understood and executed (shown as a toast)."""
+    type: Literal["voice_command"] = "voice_command"
+    kind: str
+    text: str
+    slide_n: int | None = None
+
+
 class Summary(_Msg):
     type: Literal["summary"] = "summary"
     questions: list[dict]

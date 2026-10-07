@@ -17,6 +17,8 @@ export class PresenterClient {
   private lastPos = { slide: 0, sentence: 0 };
   private wasPresenting = false;
   private pointerKey = 0;
+  private noticeKey = 0;
+  private noticeTimer = 0;
 
   constructor(private deckId: string) {
     this.queue = new PlaybackQueue({
@@ -134,6 +136,12 @@ export class PresenterClient {
     this.set({ micOn: false });
   }
 
+  notify(text: string, ms = 3500): void {
+    window.clearTimeout(this.noticeTimer);
+    this.set({ notice: { key: ++this.noticeKey, text } });
+    this.noticeTimer = window.setTimeout(() => this.set({ notice: null }), ms);
+  }
+
   // ---- inbound
   private onItemStart(item: QueueItem, durationMs: number): void {
     const patch: Partial<Snapshot> = {
@@ -161,7 +169,12 @@ export class PresenterClient {
   private onMessage(m: ServerMsg): void {
     switch (m.type) {
       case "session_ready":
-        this.set({ ready: true, services: m.services as Record<string, string>, bargeIn: m.barge_in as boolean });
+        this.set({
+          ready: true,
+          services: m.services as Record<string, string>,
+          bargeIn: m.barge_in as boolean,
+          sessionId: m.session_id as string,
+        });
         if (this.wasPresenting) {
           this.wasPresenting = false;
           this.send({ type: "control", action: "start" });
@@ -178,7 +191,8 @@ export class PresenterClient {
           hand: state === "PAUSED" || state === "LISTENING" ? this.snap.hand : false,
         });
         if (state === "IDLE" || state === "LISTENING") this.set({ caption: "", prevCaption: "", captionKind: "", transcript: "" });
-        if (state === "IDLE") this.set({ pointer: null });
+        if (state === "IDLE") this.set({ pointer: null, startedAt: null });
+        if (state === "PRESENTING" && this.snap.startedAt === null) this.set({ startedAt: Date.now() });
         break;
       }
       case "slide":
@@ -220,6 +234,21 @@ export class PresenterClient {
           unanswered: m.unanswered as Snapshot["unanswered"],
         });
         break;
+      case "voice_command": {
+        const labels: Record<string, string> = {
+          next: "next slide",
+          prev: "previous slide",
+          goto: `slide ${m.slide_n}`,
+          first: "first slide",
+          last: "last slide",
+          restart: "start over",
+          repeat_slide: "repeat this slide",
+          pause: "pause",
+          resume: "continue",
+        };
+        this.notify(`🎙 “${m.text}” → ${labels[m.kind as string] ?? m.kind}`);
+        break;
+      }
       case "error":
         this.set({ error: m.message as string });
         break;

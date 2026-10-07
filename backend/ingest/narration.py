@@ -12,9 +12,10 @@ from .sentences import clean_narration, split_sentences
 log = logging.getLogger("ingest.narration")
 
 
-async def generate_slide_narration(llm: LLMClient, settings: Settings, brief: SlideBrief) -> tuple[str, str]:
+async def generate_slide_narration(llm: LLMClient, settings: Settings, brief: SlideBrief, tone: str = "conversational",
+                                   length: str = "standard", instruction: str = "", previous: str = "") -> tuple[str, str]:
     """Returns (text, model_used). Tries script model, then fallback model, then a deterministic script."""
-    msgs = narration_messages(settings.presenter_name, brief)
+    msgs = narration_messages(settings.presenter_name, brief, tone, length, instruction, previous)
     for model in settings.script_models() or [""]:
         try:
             text = await with_backoff(
@@ -30,16 +31,19 @@ async def generate_slide_narration(llm: LLMClient, settings: Settings, brief: Sl
     return clean_narration(text), "fallback-template"
 
 
-async def build_narration(llm: LLMClient, settings: Settings, slides: list[dict], progress=None) -> list[dict]:
+def brief_for(slides: list[dict], idx: int) -> SlideBrief:
+    s = slides[idx]
+    nxt = slides[idx + 1] if idx + 1 < len(slides) else None
+    return SlideBrief(n=s["n"], total=len(slides), title=s["title"], body=s["body"], tables=s["tables"], notes=s["notes"],
+                      next_title=nxt["title"] if nxt else "", next_body=(nxt["body"][:200] if nxt else ""))
+
+
+async def build_narration(llm: LLMClient, settings: Settings, slides: list[dict], progress=None,
+                          tone: str = "conversational", length: str = "standard") -> list[dict]:
     total = len(slides)
     out: list[dict] = []
     for idx, s in enumerate(slides):
-        nxt = slides[idx + 1] if idx + 1 < total else None
-        brief = SlideBrief(
-            n=s["n"], total=total, title=s["title"], body=s["body"], tables=s["tables"], notes=s["notes"],
-            next_title=nxt["title"] if nxt else "", next_body=(nxt["body"][:200] if nxt else ""),
-        )
-        text, model = await generate_slide_narration(llm, settings, brief)
+        text, model = await generate_slide_narration(llm, settings, brief_for(slides, idx), tone, length)
         sentences = split_sentences(text)
         out.append({"n": s["n"], "title": s["title"], "sentences": sentences, "model": model})
         if progress:

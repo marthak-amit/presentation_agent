@@ -17,6 +17,7 @@ STOCK_CLIPS: dict[str, str] = {
     "filler": "Good question — give me a second.",
     "followup": "Great question — I'll have {name} follow up on that.",
     "open_qa": "That's everything I had. What questions do you have?",
+    "ack": "Sure.",
 }
 
 
@@ -28,13 +29,13 @@ def clip_path(stock_dir: Path, key: str) -> Path:
     return stock_dir / f"{key}.mp3"
 
 
-def clip_url(key: str) -> str:
-    return f"/stock/{key}.mp3"
+def clip_url(key: str, version: int = 0) -> str:
+    return f"/stock/{key}.mp3" + (f"?v={version}" if version else "")
 
 
 async def ensure_clip(cache: AudioCache, stock_dir: Path, key: str, presenter: str) -> str:
-    await cache.ensure(clip_path(stock_dir, key), clip_text(key, presenter))
-    return clip_url(key)
+    path, _ = await cache.ensure(clip_path(stock_dir, key), clip_text(key, presenter))
+    return clip_url(key, path.stat().st_mtime_ns // 1000)  # new text / new voice -> new URL (no stale browser cache)
 
 
 async def ensure_all_clips(cache: AudioCache, stock_dir: Path, presenter: str) -> int:

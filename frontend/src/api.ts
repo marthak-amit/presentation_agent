@@ -12,8 +12,10 @@ export interface DeckInfo {
   stage: string;
   progress: number;
   error: string | null;
-  audio: { done: number; total: number };
+  audio: { done: number; total: number; fake?: number };
   docs: { name: string; chunks: number }[];
+  tone?: string;
+  length?: string;
   slides: SlideInfo[];
 }
 export interface DeckSummary {
@@ -39,9 +41,11 @@ async function j<T>(r: Response): Promise<T> {
 }
 
 export const api = {
-  async uploadDeck(file: File): Promise<{ deck_id: string }> {
+  async uploadDeck(file: File, tone = "conversational", length = "standard"): Promise<{ deck_id: string }> {
     const fd = new FormData();
     fd.append("file", file);
+    fd.append("tone", tone);
+    fd.append("length", length);
     return j(await fetch("/decks", { method: "POST", body: fd }));
   },
   async addDocs(deckId: string, files: File[]): Promise<{ chunks: number }> {
@@ -51,6 +55,30 @@ export const api = {
   },
   async getDeck(deckId: string): Promise<DeckInfo> {
     return j(await fetch(`/decks/${deckId}`));
+  },
+  async saveScript(deckId: string, n: number, text: string): Promise<SlideInfo> {
+    return j(
+      await fetch(`/decks/${deckId}/narration/${n}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      }),
+    );
+  },
+  async regenerateScript(deckId: string, n: number, instruction: string): Promise<SlideInfo> {
+    return j(
+      await fetch(`/decks/${deckId}/narration/${n}/regenerate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction }),
+      }),
+    );
+  },
+  async retryAudio(deckId: string): Promise<void> {
+    await j(await fetch(`/decks/${deckId}/audio`, { method: "POST" }));
+  },
+  async deleteDeck(deckId: string): Promise<void> {
+    await j(await fetch(`/decks/${deckId}`, { method: "DELETE" }));
   },
   async listDecks(): Promise<DeckSummary[]> {
     return j(await fetch("/decks"));

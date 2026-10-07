@@ -37,6 +37,16 @@ The header of the Presenter page shows which services are real (`STT: deepgram (
 Embeddings use `sentence-transformers/all-MiniLM-L6-v2` locally (first run downloads ~90 MB; if the download is
 blocked it falls back to a built-in hashing embedder so nothing breaks).
 
+## Features at a glance
+
+- **Setup check** (`/check`): real requests verify every key/model/tool, mic level meter, voice test. Run it before every demo.
+- **Script editor** (`/script/{deck}`): edit what will be said per slide, or ask the AI to rewrite it ("shorter", "more casual", "mention the pilot"). Only changed sentences are re-voiced; the Q&A index and slide highlighter follow. Tone (conversational / formal / energetic / storytelling) and length are chosen at upload.
+- **Live reading highlighter + mouse arrow** follow the line being spoken, in narration and in answers.
+- **Voice**: say **"Okay Agent"** then a question, or a command: "next slide", "previous slide", "go to slide 3", "pause", "continue", "repeat this slide", "start over". Cut an answer short with "Okay Agent" / "wait" / "stop". Extra wake spellings: `WAKE_PHRASES` in `.env`.
+- **Keyboard**: Space pause/resume · ←/→ slides · F full screen · M mic · B voice commands on/off. Thumbnail strip, progress bar, talk timer, full-screen stage mode with big captions.
+- **Q&A report**: the end screen has *Download Q&A report (.md)* (questions, answers, a checklist of follow-ups to send).
+- Answers come in the language of the question (English / Hindi / Hinglish).
+
 ## How a session works
 
 1. **Ingest** (`POST /decks`): slides → PNGs, speaker notes → first-person narration (45–75 s per slide, sequential Groq calls with 429 backoff),
@@ -55,6 +65,8 @@ Protocol details: [`docs/ws.md`](docs/ws.md). Debug page: `/debug` (live transcr
 
 - [ ] `make dev` is running; `curl localhost:8000/health` shows the services you expect (not `fake`).
 - [ ] Deck uploaded **the day before**; status *Ready* and `audio X/X` complete on the Upload page (audio is cached on disk, so the talk survives a network drop).
+- [ ] Run **Check setup** (`/check`): everything green, mic meter moves, *Play voice test* sounds like you.
+- [ ] Read the generated script in **Edit script** and fix anything that does not sound like you.
 - [ ] Add reference docs (FAQ/pricing PDF) with *Add reference docs* so Q&A has answers beyond the slides.
 - [ ] Use **headphones** or keep speakers low and use Chrome (echo cancellation is on, but a loud speaker next to the mic will still bleed).
 - [ ] Click **Enable microphone** and allow the permission prompt; the Debug page (second window/monitor) should show live interim text when you speak.

@@ -36,6 +36,9 @@ export interface Snapshot {
   micError: string;
   hand: boolean;
   pointer: ActivePointer | null;
+  notice: { key: number; text: string } | null;
+  sessionId: string;
+  startedAt: number | null;
   questions: { question: string; answer?: string; ts?: string }[];
   unanswered: { question: string; ts?: string }[];
   lastModel: string;
@@ -62,6 +65,9 @@ export const initialSnapshot: Snapshot = {
   micError: "",
   hand: false,
   pointer: null,
+  notice: null,
+  sessionId: "",
+  startedAt: null,
   questions: [],
   unanswered: [],
   lastModel: "",

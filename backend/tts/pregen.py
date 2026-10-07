@@ -19,12 +19,15 @@ async def pregenerate_deck_audio(svc: Services, deck_id: str) -> None:
     await ensure_all_clips(cache, svc.settings.stock_dir, svc.settings.presenter_name)
     sem = asyncio.Semaphore(CONCURRENCY)
     done = 0
+    fake = 0
 
     async def one(n: int, i: int, text: str):
-        nonlocal done
+        nonlocal done, fake
         async with sem:
             try:
-                await cache.ensure(store.audio_path(deck_id, n, i), text)
+                _, provider = await cache.ensure(store.audio_path(deck_id, n, i), text)
+                if provider == "fake" and svc.tts.real:
+                    fake += 1  # a real voice is configured but this sentence fell back to silent mock audio
             except Exception as e:  # never fail the whole deck on one sentence
                 log.warning("audio %s/%s failed: %s", n, i, e)
             done += 1
@@ -32,5 +35,7 @@ async def pregenerate_deck_audio(svc: Services, deck_id: str) -> None:
                 store.update_meta(deck_id, audio={"done": done, "total": len(jobs)})
 
     await asyncio.gather(*(one(*j) for j in jobs))
-    store.update_meta(deck_id, audio={"done": done, "total": len(jobs)}, audio_provider=svc.tts.primary_name)
+    store.update_meta(deck_id, audio={"done": done, "total": len(jobs), "fake": fake}, audio_provider=svc.tts.primary_name)
+    if fake:
+        log.warning("deck %s: %d sentence(s) have silent mock audio (voice provider failed); POST /decks/%s/audio retries", deck_id, fake, deck_id)
     log.info("deck %s: %d audio files ready", deck_id, done)

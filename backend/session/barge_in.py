@@ -5,12 +5,16 @@ well inside the 400 ms budget.
 """
 from __future__ import annotations
 
+import os
+import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Callable
 
 from rapidfuzz import fuzz
+
+from ..config import _load_env_files
 
 TRIGGERS = [
     "i have a question", "quick question", "can i ask", "excuse me", "wait", "hold on",
@@ -20,7 +24,11 @@ TRIGGERS = [
 # Deepgram `language=multi` may return Hindi in Devanagari script; same phrases, different script.
 EXTRA_TRIGGERS = ["एक सवाल", "एक मिनट", "रुको", "मेरा सवाल", "मेरा क्वेश्चन", "एक प्रश्न"]
 # Wake phrase: "Okay Agent" (STT may write it "OK, agent" / "o.k. agent" / "okay, Agent!"), then the question.
-WAKE_TRIGGERS = ["okay agent", "ok agent", "o k agent"]
+# Override / extend with WAKE_PHRASES="okay agent,ok agent,hey bytes" in .env (e.g. for a mishearing seen on the Debug page).
+_load_env_files()
+WAKE_TRIGGERS = [normalize_phrase for normalize_phrase in
+                 (" ".join(re.sub(r"[^\w\s]", " ", p.lower()).split()) for p in os.getenv("WAKE_PHRASES", "").split(","))
+                 if normalize_phrase] or ["okay agent", "ok agent", "o k agent"]
 ALL_TRIGGERS = TRIGGERS + EXTRA_TRIGGERS + WAKE_TRIGGERS
 # Only meaningful while the agent is ANSWERING: cut the answer short.
 STOP_TRIGGERS = ["stop", "stop it", "okay stop", "that's enough", "thats enough", "enough"]
