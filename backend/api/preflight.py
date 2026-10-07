@@ -45,6 +45,15 @@ async def _timed(coro, check: Check, timeout: float = 9.0) -> Check:
 
 
 # --------------------------------------------------------------------------- individual checks
+def _el_status(r: httpx.Response) -> str:
+    """ElevenLabs error bodies look like {"detail": {"status": "invalid_api_key" | "missing_permissions", ...}}."""
+    try:
+        d = r.json().get("detail")
+        return (d.get("status") if isinstance(d, dict) else str(d or "")) or ""
+    except Exception:
+        return ""
+
+
 async def check_tools() -> list[Check]:
     out = []
     lo = shutil.which("soffice") or shutil.which("libreoffice")
@@ -87,9 +96,13 @@ async def check_groq(svc) -> Check:
         ids = {m["id"] for m in r.json().get("data", [])}
         missing = [m for m in (s.groq_qa_model, s.groq_script_model, s.groq_fallback_model) if m and m not in ids]
         if missing:
+            skip = ("whisper", "guard", "tts", "playai", "orpheus", "distil")
+            chat = sorted(i for i in ids if not any(x in i.lower() for x in skip))
             c.status = "fail"
             c.detail = f"key OK, but model(s) not available to this key: {', '.join(missing)}"
-            c.fix = "Fix GROQ_QA_MODEL / GROQ_SCRIPT_MODEL / GROQ_FALLBACK_MODEL in .env"
+            c.fix = ("Set GROQ_FALLBACK_MODEL (and any other missing one) in .env to a model your key has. Available: "
+                     + ", ".join(chat[:12]))
+            c.extra["available_models"] = chat
         else:
             c.detail = f"key OK · QA {s.groq_qa_model} · fallback {s.groq_fallback_model}"
 
@@ -131,19 +144,38 @@ async def check_tts(svc) -> Check:
         c.label = "ElevenLabs (your cloned voice)"
 
         async def run():
+            h = {"xi-api-key": s.elevenlabs_api_key}
             async with httpx.AsyncClient(timeout=8.0) as cl:
-                r = await cl.get(f"https://api.elevenlabs.io/v1/voices/{s.elevenlabs_voice_id}",
-                                 headers={"xi-api-key": s.elevenlabs_api_key})
-            if r.status_code == 401:
-                c.status, c.detail, c.fix = "fail", "API key rejected (HTTP 401)", "Create a new key at elevenlabs.io (enable Text to Speech)"
-            elif r.status_code in (400, 404, 422):
-                c.status, c.detail = "fail", f"voice id not found (HTTP {r.status_code})"
-                c.fix = "Copy the voice ID (not the name) from My Voices into ELEVENLABS_VOICE_ID"
-            else:
-                r.raise_for_status()
-                j = r.json()
-                c.detail = f"voice '{j.get('name', '?')}' ({j.get('category', 'voice')}) · model {s.elevenlabs_model_id}"
-                c.extra["voice"] = j.get("name", "")
+                r = await cl.get(f"https://api.elevenlabs.io/v1/voices/{s.elevenlabs_voice_id}", headers=h)
+                if r.status_code == 200:
+                    j = r.json()
+                    c.detail = f"voice '{j.get('name', '?')}' ({j.get('category', 'voice')}) · model {s.elevenlabs_model_id}"
+                    c.extra["voice"] = j.get("name", "")
+                    return
+                status = _el_status(r)
+                if r.status_code == 401 and status == "missing_permissions":
+                    # restricted key without "Voices: read": prove the key + voice id with a real (tiny) synthesis instead
+                    t = await cl.post(f"https://api.elevenlabs.io/v1/text-to-speech/{s.elevenlabs_voice_id}",
+                                      headers={**h, "accept": "audio/mpeg"},
+                                      json={"text": "Hi.", "model_id": s.elevenlabs_model_id})
+                    if t.status_code == 200 and len(t.content) > 200:
+                        c.detail = (f"key + voice id work (speech generated) · model {s.elevenlabs_model_id}. "
+                                    "The voice name is hidden because this key lacks 'Voices: read'.")
+                        return
+                    c.status = "fail"
+                    ts = _el_status(t)
+                    c.detail = f"API key lacks permission ({ts or t.status_code}) - it needs 'Text to Speech'"
+                    c.fix = "elevenlabs.io → Developers → API Keys: edit the key and enable Text to Speech (and Voices: read), or create an unrestricted key"
+                elif r.status_code == 401:
+                    c.status = "fail"
+                    c.detail = "API key rejected (HTTP 401 invalid_api_key)" if status in ("invalid_api_key", "") else f"HTTP 401 {status}"
+                    c.fix = ("Copy the key again from elevenlabs.io (it is shown only once), paste it in .env WITHOUT quotes/spaces, "
+                             "then RESTART make dev (changes to .env are only read at startup)")
+                elif r.status_code in (400, 404, 422):
+                    c.status, c.detail = "fail", f"voice id not found (HTTP {r.status_code})"
+                    c.fix = "Copy the voice ID (not the name) from My Voices into ELEVENLABS_VOICE_ID; for library voices click 'Add to my voices' first"
+                else:
+                    r.raise_for_status()
 
         return await _timed(run(), c)
     if s.use_aura:
@@ -177,6 +209,23 @@ async def check_embeddings(svc) -> Check:
     return c
 
 
+async def check_env_fresh(svc) -> Check:
+    from ..config import ROOT
+
+    c = Check("env", ".env loaded")
+    env = ROOT / ".env"
+    started = getattr(svc, "started_at", None)
+    if not env.exists():
+        c.status, c.detail, c.fix = "warn", "no .env file - using .env.example defaults", "cp .env.example .env and add your keys"
+    elif started and env.stat().st_mtime > started + 1:
+        c.status = "warn"
+        c.detail = ".env was edited AFTER the server started, so the running server still uses the OLD keys/voice"
+        c.fix = "Stop make dev (Ctrl-C) and start it again"
+    else:
+        c.detail = ".env is up to date with the running server"
+    return c
+
+
 async def check_storage(svc) -> Check:
     c = Check("storage", "Data folder")
     try:
@@ -192,9 +241,10 @@ async def check_storage(svc) -> Check:
 @router.get("/preflight")
 async def preflight(request: Request):
     svc = request.app.state.svc
-    tools, groq, dg, tts, emb, store = await asyncio.gather(
-        check_tools(), check_groq(svc), check_deepgram(svc), check_tts(svc), check_embeddings(svc), check_storage(svc))
-    checks = [*tools, groq, *dg, tts, emb, store]
+    tools, groq, dg, tts, emb, store, env = await asyncio.gather(
+        check_tools(), check_groq(svc), check_deepgram(svc), check_tts(svc), check_embeddings(svc), check_storage(svc),
+        check_env_fresh(svc))
+    checks = [env, *tools, groq, *dg, tts, emb, store]
     worst = "ok"
     for c in checks:
         if c.status == "fail":

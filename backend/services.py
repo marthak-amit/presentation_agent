@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 
 from .config import Settings
@@ -23,6 +24,7 @@ class Services:
     _kb: KnowledgeBase | None = None
     _kb_lock: threading.Lock = field(default_factory=threading.Lock)
     extras: dict = field(default_factory=dict)  # phase 2+: tts, stt factory, hub, logs
+    started_at: float = field(default_factory=time.time)
 
     @property
     def kb(self) -> KnowledgeBase:
