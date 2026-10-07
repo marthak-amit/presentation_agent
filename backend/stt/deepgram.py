@@ -54,8 +54,9 @@ def parse_message(raw: str | bytes) -> STTEvent | None:
 class DeepgramSTT:
     name = "deepgram"
 
-    def __init__(self, settings: Settings, on_event: OnSTTEvent, keyterms: list[str]):
+    def __init__(self, settings: Settings, on_event: OnSTTEvent, keyterms: list[str], url: str | None = None):
         self.settings = settings
+        self._url = url
         self.on_event = on_event
         self.keyterms = keyterms
         self.status = "down"
@@ -95,7 +96,7 @@ class DeepgramSTT:
 
     async def _run(self) -> None:
         backoff = 0.5
-        url = build_url(self.settings, self.keyterms)
+        url = self._url or build_url(self.settings, self.keyterms)
         headers = {"Authorization": f"Token {self.settings.deepgram_api_key}"}
         while not self._closed:
             sender = keep = None

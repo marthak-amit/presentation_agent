@@ -55,6 +55,20 @@ class FakeClient:
         await self.session.handle(M.AudioEnded(play_id=pid))
 
     # helpers
+    async def sim(self, text: str, final: bool = True, end: bool = False, conf: float = 0.95):
+        await self.session.handle(M.SimTranscript(text=text, is_final=final, confidence=conf, utterance_end=end))
+
+    async def say(self, text: str):
+        """A complete utterance: interim -> final -> UtteranceEnd."""
+        await self.sim(text, final=False)
+        await self.sim(text, final=True, end=True)
+
+    def idx(self, pred) -> int:
+        for i, m in enumerate(self.messages):
+            if pred(m):
+                return i
+        return -1
+
     async def open(self, deck_id: str, barge_in: bool = True):
         await self.session.open(deck_id, barge_in)
 

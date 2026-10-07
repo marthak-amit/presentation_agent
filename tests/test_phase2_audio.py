@@ -190,3 +190,40 @@ def test_websocket_end_to_end(svc):
                     break
             assert "state" in seen and "slide" in seen
         assert http.get("/stock/go_ahead.mp3").status_code == 200
+
+
+# ---------------------------------------------------------------- provider request shapes (httpx mock transport)
+async def test_elevenlabs_and_aura_request_shapes(settings):
+    import json as _json
+    from dataclasses import replace
+
+    import httpx
+
+    from backend.tts.aura import AuraTTS
+    from backend.tts.elevenlabs import ElevenLabsTTS
+
+    seen = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        if "elevenlabs" in req.url.host and "bad" in req.url.path:
+            return httpx.Response(401, json={"detail": "nope"})
+        return httpx.Response(200, content=b"\xff\xfb\x90\x00" + bytes(500))
+
+    s = replace(settings, elevenlabs_api_key="xi-key", elevenlabs_voice_id="voice123", elevenlabs_model_id="m-eleven",
+                deepgram_api_key="dg-key", deepgram_tts_model="aura-x")
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    audio = await ElevenLabsTTS(s, client).synth("Hello there")
+    assert len(audio) > 200
+    r = seen[-1]
+    assert r.url.path == "/v1/text-to-speech/voice123/stream" and r.headers["xi-api-key"] == "xi-key"
+    assert _json.loads(r.content)["model_id"] == "m-eleven" and _json.loads(r.content)["text"] == "Hello there"
+
+    audio = await AuraTTS(s, client).synth("Hi")
+    r = seen[-1]
+    assert r.url.host == "api.deepgram.com" and r.url.params["model"] == "aura-x" and r.headers["authorization"] == "Token dg-key"
+    assert len(audio) > 200
+
+    bad = ElevenLabsTTS(replace(s, elevenlabs_voice_id="bad"), client)
+    with pytest.raises(RuntimeError, match="401"):
+        await bad.synth("x")

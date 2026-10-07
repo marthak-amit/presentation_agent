@@ -33,6 +33,14 @@ class Services:
                     self._kb = KnowledgeBase(self.settings.chroma_dir, emb)
         return self._kb
 
+    @property
+    def logs(self):
+        from .session.logs import LogStore
+
+        if "logs" not in self.extras:
+            self.extras["logs"] = LogStore(self.settings.logs_dir)
+        return self.extras["logs"]
+
     def __getattr__(self, item):  # services.tts / services.hub ... live in extras
         extras = self.__dict__.get("extras", {})
         if item in extras:

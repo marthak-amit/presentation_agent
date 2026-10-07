@@ -1,29 +1,71 @@
-"""PresenterSession: one per WebSocket. Owns playhead, state machine, audio sequencing."""
+"""PresenterSession: one per WebSocket. Owns playhead, state machine, audio sequencing, barge-in and live Q&A."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
+import re
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
+from ..llm.prompts import qa_messages
+from ..llm.qa import Failed, Filler, Finished, ModelSwitch, QAEngine, Text, ToolUsed
+from ..rag.store import format_context
 from ..services import Services
 from ..stt.base import STTEvent
+from ..stt.deepgram import DeepgramSTT
 from ..stt.fake import FakeSTT
-from ..tts.clips import clip_text, clip_url, ensure_clip
+from ..tts.clips import clip_text, ensure_clip
 from . import messages as M
+from .barge_in import (ALL_TRIGGERS, BargeDecision, BargeInDetector, EchoGuard, UtteranceBuffer, is_dismissal,
+                       strip_leading_trigger)
 from .plan import DeckPlan
 from .playback import PlaybackTracker
-from .state import InvalidTransition, S, StateMachine
+from .sentences_stream import SentenceStreamer
+from .state import S, StateMachine
 
 log = logging.getLogger("session")
 
 SendFn = Callable[[dict], Awaitable[None]]
+FOLLOWUP_RE = re.compile(r"follow[\s-]?up", re.I)
 
 
 def audio_timeout(num_bytes: int) -> float:
     """Upper bound on how long a clip can legitimately play (assumes >= 48 kbps)."""
     return num_bytes / 6000.0 + 4.0
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+class SessionToolbox:
+    """Tools the Q&A model may call."""
+
+    def __init__(self, session: "PresenterSession"):
+        self.s = session
+
+    async def run(self, name: str, args: dict) -> str:
+        s = self.s
+        if name == "search_kb":
+            query = str(args.get("query", ""))
+            chunks = await asyncio.to_thread(s.svc.kb.search, s.deck_id, query, 3)
+            return format_context(chunks, 1000) or "No relevant results."
+        if name == "goto_slide":
+            try:
+                n = int(args.get("n"))
+            except (TypeError, ValueError):
+                return "Invalid slide number."
+            if s.plan is None or not s.plan.has(n):
+                return f"There is no slide {n}."
+            await s._send(M.SlideMsg(slide_n=n, temporary=True))
+            return f"Now showing slide {n}: {s.plan.title(n)}"
+        if name == "resume_presenting":
+            s._resume_requested = True
+            return "OK. You will go straight back to presenting after this answer."
+        return f"Unknown tool {name}."
 
 
 class PresenterSession:
@@ -40,10 +82,24 @@ class PresenterSession:
         self.barge_in_enabled = True
         self.closed = False
         self.stt = FakeSTT()
+        self.pause_reason = ""
         self._present_task: asyncio.Task | None = None
         self._bg: set[asyncio.Task] = set()
-        self.resume_ts = 0.0
-        self.pause_reason = ""
+        # Q&A
+        self.echo = EchoGuard(self.cfg.echo_threshold)
+        self.detector = BargeInDetector(threshold=self.cfg.barge_fuzzy_threshold, min_confidence=self.cfg.barge_min_confidence,
+                                        cooldown_s=self.cfg.barge_cooldown_s, inline_words=self.cfg.question_inline_words,
+                                        echo=self.echo)
+        self.buf = UtteranceBuffer()
+        self._qa_q: asyncio.Queue = asyncio.Queue()
+        self._qa_task: asyncio.Task | None = None
+        self._history: list[tuple[str, str]] = []
+        self._resume_requested = False
+        self._ptt_active = False
+        self.interruptions: list[dict] = []
+        self.unanswered: list[dict] = []
+        self.last_trigger = ""
+        self.last_model_info: dict = {}
 
     # ------------------------------------------------------------------ plumbing
     @property
@@ -53,11 +109,22 @@ class PresenterSession:
     async def _send(self, msg: M._Msg | dict) -> None:
         if self.closed:
             return
+        wire = msg.wire() if isinstance(msg, M._Msg) else msg
+        self._observe(wire)
         try:
-            await self._send_raw(msg.wire() if isinstance(msg, M._Msg) else msg)
+            await self._send_raw(wire)
         except Exception as e:  # socket gone
             log.debug("send failed: %s", e)
             self.closed = True
+
+    def _observe(self, wire: dict) -> None:
+        """Mirror outgoing messages to the debug hub (audio payloads stripped)."""
+        hub = self.svc.extras.get("hub")
+        if hub is None:
+            return
+        if wire.get("type") == "play_answer":
+            wire = {**wire, "audio_b64": f"<{len(wire.get('audio_b64', ''))} b64 chars>"}
+        hub.publish(self.session_id, wire)
 
     def _spawn(self, coro, name: str = "") -> asyncio.Task:
         t = asyncio.create_task(coro, name=name or None)
@@ -74,7 +141,7 @@ class PresenterSession:
         changed = self.sm.go(to, reason)
         if changed:
             if to == S.PRESENTING:
-                self.resume_ts = time.monotonic()
+                self.detector.note_resume()
             await self._emit_state(reason)
         return changed
 
@@ -104,8 +171,11 @@ class PresenterSession:
         await self._send(M.SlideMsg(slide_n=self.playhead[0]))
         await self._emit_state("ready")
 
-    async def _setup_stt(self) -> None:  # replaced in phase 3
-        self.stt = FakeSTT(self._on_stt_event)
+    async def _setup_stt(self) -> None:
+        if self.cfg.use_real_stt:
+            self.stt = DeepgramSTT(self.cfg, self._on_stt_event, keyterms=ALL_TRIGGERS)
+        else:
+            self.stt = FakeSTT(self._on_stt_event)
         await self.stt.start()
 
     async def _warm_clips(self) -> None:
@@ -119,6 +189,7 @@ class PresenterSession:
     async def close(self) -> None:
         self.closed = True
         await self._cancel_present()
+        await self._cancel_qa()
         self.tracker.cancel_all()
         for t in list(self._bg):
             t.cancel()
@@ -164,7 +235,10 @@ class PresenterSession:
             if self.state == S.PRESENTING:
                 await self._pause("user")
         elif a == "resume":
-            await self._resume_from_pause("user")
+            if self.state == S.PAUSED:
+                await self._resume_from_pause("user")
+            elif self.state in (S.LISTENING, S.ANSWERING) and self._qa_task is not None:
+                await self._abort_qa_and_resume()
         elif a in ("next", "prev", "goto"):
             n = self.playhead[0]
             if a == "next":
@@ -182,6 +256,12 @@ class PresenterSession:
 
     async def _cancel_present(self) -> None:
         t, self._present_task = self._present_task, None
+        if t and not t.done() and t is not asyncio.current_task():
+            t.cancel()
+            await asyncio.gather(t, return_exceptions=True)
+
+    async def _cancel_qa(self) -> None:
+        t, self._qa_task = self._qa_task, None
         if t and not t.done() and t is not asyncio.current_task():
             t.cancel()
             await asyncio.gather(t, return_exceptions=True)
@@ -217,48 +297,43 @@ class PresenterSession:
     async def _restart(self) -> None:
         assert self.plan is not None
         await self._cancel_present()
+        await self._cancel_qa()
         self.tracker.cancel_all()
-        await self._on_restart_cleanup()
+        self.buf.reset()
+        self._ptt_active = False
         await self._send(M.Pause(fade_ms=100, reason="restart"))
         self.playhead = (self.plan.first, 0)
         if self.state != S.IDLE:
-            if self.sm.can(S.IDLE):
-                await self._go(S.IDLE, "restart")
+            await self._go(S.IDLE, "restart")
         await self._begin_presenting("restart")
-
-    async def _on_restart_cleanup(self) -> None:  # phase 3 hook
-        pass
 
     # ------------------------------------------------------------------ presenting
     async def _present_loop(self) -> None:
         assert self.plan is not None
         plan = self.plan
-        try:
-            while self.sm.state == S.PRESENTING and not self.closed:
-                n, i = self.playhead
-                text = plan.sentence(n, i)
-                try:
-                    if text is None:  # slide without narration: show it briefly
-                        await self._send(M.SlideMsg(slide_n=n))
-                        await asyncio.sleep(2.0)
-                    else:
-                        await self._play_sentence(n, i, text)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    log.exception("sentence %s/%s failed; skipping", n, i)
-                    await asyncio.sleep(0.3)
-                if self.sm.state != S.PRESENTING:
-                    return
-                nxt = plan.next_pos(n, i)
-                if nxt is None:
-                    await self._finish_deck()
-                    return
-                if nxt[0] != n:
-                    await asyncio.sleep(0.3)  # natural beat between slides
-                self.playhead = nxt
-        except asyncio.CancelledError:
-            raise
+        while self.sm.state == S.PRESENTING and not self.closed:
+            n, i = self.playhead
+            text = plan.sentence(n, i)
+            try:
+                if text is None:  # slide without narration: show it briefly
+                    await self._send(M.SlideMsg(slide_n=n))
+                    await asyncio.sleep(2.0)
+                else:
+                    await self._play_sentence(n, i, text)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("sentence %s/%s failed; skipping", n, i)
+                await asyncio.sleep(0.3)
+            if self.sm.state != S.PRESENTING:
+                return
+            nxt = plan.next_pos(n, i)
+            if nxt is None:
+                await self._finish_deck()
+                return
+            if nxt[0] != n:
+                await asyncio.sleep(0.3)  # natural beat between slides
+            self.playhead = nxt
 
     def _sentence_url(self, n: int, i: int) -> str:
         return f"/media/{self.deck_id}/audio/{n}/s{i}.mp3"
@@ -276,38 +351,307 @@ class PresenterSession:
                 next_url = self._sentence_url(*nxt)
         play_id = self.tracker.new_id("s")
         fut = self.tracker.expect(play_id)
-        self._on_speaking(text)
+        self.echo.speaking(text)
         await self._send(M.PlaySentence(play_id=play_id, slide_n=n, sentence_i=i, text=text,
                                         url=self._sentence_url(n, i), next_url=next_url))
         await self.tracker.wait(play_id, fut, audio_timeout(path.stat().st_size))
-
-    def _on_speaking(self, text: str) -> None:  # phase 3 hook (echo guard)
-        pass
+        self.echo.mark_end(time.monotonic())
 
     async def _finish_deck(self) -> None:
         await self._go(S.END, "deck_finished")
-        await self._send(M.Summary(questions=[], unanswered=[]))
-        await self._enter_open_qa()
-
-    async def _enter_open_qa(self) -> None:
-        """Say the closing line, then listen for questions (phase 3 handles the questions)."""
-        url = await ensure_clip(self.svc.audio, self.cfg.stock_dir, "open_qa", self.cfg.presenter_name)
-        play_id = self.tracker.new_id("c")
-        fut = self.tracker.expect(play_id)
-        await self._send(M.PlayClip(play_id=play_id, clip="open_qa",
-                                    text=clip_text("open_qa", self.cfg.presenter_name), url=url))
-        await self.tracker.wait(play_id, fut, 8.0)
+        await self._send(self._summary())
+        await self._play_clip("open_qa", wait=True)
+        self.buf.reset()
+        self.buf.capturing = True
         await self._go(S.OPEN_QA, "open_qa")
+        self._start_qa("open")
 
-    # ------------------------------------------------------------------ phase 3 hooks
+    def _summary(self) -> M.Summary:
+        return M.Summary(questions=[{"question": r["question"], "answer": r["answer"], "ts": r["ts"]}
+                                    for r in self.interruptions],
+                         unanswered=list(self.unanswered))
+
+    # ------------------------------------------------------------------ clips
+    async def _play_clip(self, key: str, wait: bool = False):
+        url = await ensure_clip(self.svc.audio, self.cfg.stock_dir, key, self.cfg.presenter_name)
+        text = clip_text(key, self.cfg.presenter_name)
+        pid = self.tracker.new_id("c")
+        fut = self.tracker.expect(pid)
+        self.echo.speaking(text)
+        await self._send(M.PlayClip(play_id=pid, clip=key, text=text, url=url))
+        if wait:
+            await self.tracker.wait(pid, fut, 8.0)
+            self.echo.mark_end(time.monotonic())
+        return pid, fut
+
+    # ================================================================== STT / barge-in
+    async def _on_sim(self, m: M.SimTranscript) -> None:
+        await self._on_stt_event(STTEvent("transcript", m.text, m.is_final, m.confidence))
+        if m.utterance_end:
+            await self._on_stt_event(STTEvent("utterance_end"))
+
     async def _on_stt_event(self, ev: STTEvent) -> None:
-        pass
+        now = time.monotonic()
+        if ev.kind == "transcript":
+            await self._send(M.Transcript(text=ev.text, is_final=ev.is_final, confidence=ev.confidence))
+            await self._on_transcript(ev.text, ev.is_final, ev.confidence, now)
+        elif ev.kind == "utterance_end":
+            await self._on_utterance_end(now)
+
+    async def _on_transcript(self, text: str, is_final: bool, conf: float, now: float) -> None:
+        st = self.state
+        if st == S.PRESENTING:
+            if not self.barge_in_enabled:
+                return
+            d = self.detector.check(text, conf, received_at=now)
+            if d is not None:
+                await self._barge_in(d, text)
+        elif st in (S.LISTENING, S.OPEN_QA):
+            if not self.buf.capturing and st == S.OPEN_QA:
+                self.buf.capturing = True
+            if self.echo.is_echo(text):
+                return  # the agent's own voice leaking into the mic
+            self.buf.add(text, is_final)
+            self._qa_q.put_nowait(("speech",))
+
+    async def _on_utterance_end(self, now: float) -> None:
+        st = self.state
+        if st == S.PRESENTING:
+            self.buf.reset()
+            return
+        if st not in (S.LISTENING, S.OPEN_QA) or self._ptt_active:
+            return
+        raw = self.buf.text()
+        self.buf.reset()
+        self.buf.capturing = True
+        self._push_question(raw, now)
+
+    def _push_question(self, raw: str, t_end: float) -> bool:
+        if not raw or self.echo.is_echo(raw):
+            return False
+        q = strip_leading_trigger(raw)
+        if len(q.split()) < self.cfg.utterance_min_words:
+            return False  # lone trigger phrase ("I have a question") or noise
+        self._qa_q.put_nowait(("question", q, t_end))
+        return True
+
+    async def _barge_in(self, d: BargeDecision, text: str) -> None:
+        m = d.match
+        self.last_trigger = m.trigger
+        log.info("barge-in %r score=%.0f detect=%.1fms inline=%s", m.trigger, m.score, d.detect_ms, d.treat_as_question)
+        self.buf.seed_from_trigger(text, m.start_char)
+        await self._send(M.BargeInHit(trigger=m.trigger, text=text, score=m.score, detect_ms=round(d.detect_ms, 2)))
+        await self._pause("barge_in")  # pause message goes to the client before anything else
+        self._start_qa("interrupt", skip_go_ahead=d.treat_as_question, trigger=m.trigger)
 
     async def _on_hand_raise(self) -> None:
-        pass
+        if self.state not in (S.PRESENTING, S.PAUSED) or self._qa_task is not None:
+            return
+        await self._send(M.BargeInHit(trigger="hand_raise", text="", score=100.0, detect_ms=0.0, source="hand_raise"))
+        if self.state == S.PRESENTING:
+            await self._pause("hand_raise")
+        self.buf.reset()
+        self.buf.capturing = True
+        self._start_qa("interrupt", trigger="hand_raise")
 
     async def _on_ptt(self, active: bool) -> None:
-        pass
+        if active:
+            if self.state in (S.PRESENTING, S.PAUSED) and self._qa_task is None:
+                self._ptt_active = True
+                await self._send(M.BargeInHit(trigger="push_to_talk", text="", score=100.0, detect_ms=0.0, source="ptt"))
+                if self.state == S.PRESENTING:
+                    await self._pause("ptt")
+                self.buf.reset()
+                self.buf.capturing = True
+                self._start_qa("interrupt", skip_go_ahead=True, trigger="push_to_talk")
+            elif self.state in (S.LISTENING, S.OPEN_QA):
+                self._ptt_active = True
+        elif self._ptt_active:
+            self._ptt_active = False
+            await self.stt.finalize()
+            await asyncio.sleep(0.35)  # let the final transcript land
+            raw = self.buf.text()
+            self.buf.reset()
+            self.buf.capturing = True
+            self._push_question(raw, time.monotonic())
 
-    async def _on_sim(self, m: M.SimTranscript) -> None:
-        pass
+    # ================================================================== Q&A flow
+    def _start_qa(self, mode: str, skip_go_ahead: bool = False, trigger: str = "") -> None:
+        self._qa_q = asyncio.Queue()
+        if skip_go_ahead:
+            self._qa_q.put_nowait(("speech",))
+        self._qa_task = asyncio.create_task(self._qa_loop(mode, skip_go_ahead, trigger), name=f"qa-{mode}")
+
+    async def _next_question(self, first_timeout: float | None):
+        """Wait for a question. Returns (text, t_end) or None on silence/timeout."""
+        timeout = first_timeout
+        while True:
+            try:
+                item = await asyncio.wait_for(self._qa_q.get(), timeout)
+            except asyncio.TimeoutError:
+                return None
+            if item[0] == "speech":
+                timeout = self.cfg.utterance_max_s
+            elif item[0] == "question":
+                return item[1], item[2]
+
+    async def _qa_loop(self, mode: str, skip_go_ahead: bool, trigger: str) -> None:
+        try:
+            if mode == "interrupt":
+                await self._go(S.LISTENING, trigger or "barge_in")
+                if not skip_go_ahead:
+                    await self._play_clip("go_ahead")  # don't block: the user may already be talking
+                got = await self._next_question(self.cfg.listen_timeout_s)
+                while got is not None:
+                    q, t_end = got
+                    await self._answer(q, t_end, trigger)
+                    if self._resume_requested:
+                        break
+                    await self._play_clip("anything_else", wait=True)
+                    got = await self._next_question(self.cfg.followup_wait_s)
+                    if got is not None and is_dismissal(got[0]):
+                        got = None
+                if not self._resume_requested or got is None:
+                    await self._play_clip("continue", wait=True)
+                await self._resume_after_qa()
+            else:  # OPEN_QA: keep answering until the session ends
+                while True:
+                    got = await self._next_question(None)
+                    if got is None:
+                        continue
+                    await self._answer(got[0], got[1], "open_qa")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Q&A loop crashed")
+            if mode == "interrupt" and not self.closed:
+                await self._resume_after_qa()
+
+    async def _abort_qa_and_resume(self) -> None:
+        await self._cancel_qa()
+        self.tracker.cancel_all()
+        await self._send(M.Pause(fade_ms=150, reason="skip_qa"))
+        await self._resume_after_qa()
+
+    async def _resume_after_qa(self) -> None:
+        """Back to the slide we interrupted, restarting the interrupted sentence from its beginning."""
+        self._qa_task = None if self._qa_task is asyncio.current_task() else self._qa_task
+        self._resume_requested = False
+        self._ptt_active = False
+        self.buf.reset()
+        await self._begin_presenting("qa_done")
+
+    async def _answer(self, question: str, t_end: float, trigger: str) -> None:
+        assert self.plan is not None
+        resume_state = self.state
+        await self._go(S.ANSWERING, "question")
+        self.buf.reset()
+        self._resume_requested = False
+        engine = QAEngine(self.svc.llm, self.cfg)
+        chunks = await asyncio.to_thread(self.svc.kb.search, self.deck_id, question, 3)
+        context = format_context(chunks)
+        cur = self.playhead[0]
+        hint = f"slide {cur}: {self.plan.title(cur)}"
+        messages = qa_messages(self.cfg.presenter_name, question, context, self._history, hint)
+
+        send_q: asyncio.Queue = asyncio.Queue()
+        last_play: list = []  # (play_id, future) of the last audio sent
+        first_audio: list[float] = []
+        idx = 0
+
+        async def sender() -> None:
+            while True:
+                item = await send_q.get()
+                if item is None:
+                    return
+                text, task = item
+                try:
+                    audio, _prov = await task
+                except Exception as e:
+                    log.warning("TTS failed for answer sentence: %s", e)
+                    continue
+                pid = self.tracker.new_id("a")
+                fut = self.tracker.expect(pid)
+                self.echo.speaking(text)
+                if not first_audio:
+                    first_audio.append(time.monotonic())
+                await self._send(M.PlayAnswer(play_id=pid, index=len(last_play), text=text,
+                                              audio_b64=base64.b64encode(audio).decode()))
+                last_play.append((pid, fut))
+
+        sender_task = asyncio.create_task(sender(), name="answer-sender")
+
+        def speak(text: str) -> None:
+            send_q.put_nowait((text, asyncio.create_task(self.svc.tts.synth(text))))
+
+        streamer = SentenceStreamer()
+        toolbox = SessionToolbox(self)
+        fin: Finished | None = None
+        failed: Failed | None = None
+        fallback_used = False
+        filler_at: float | None = None
+        try:
+            async for ev in engine.answer(messages, toolbox, t0=t_end):
+                if isinstance(ev, Filler):
+                    filler_at = time.monotonic()
+                    await self._play_clip("filler")
+                elif isinstance(ev, Text):
+                    for s in streamer.feed(ev.text):
+                        speak(s)
+                elif isinstance(ev, ModelSwitch):
+                    fallback_used = True
+                    await self._send(M.ModelInfo(model=ev.model, fallback_used=True, question=question))
+                elif isinstance(ev, Finished):
+                    fin = ev
+                    for s in streamer.flush():
+                        speak(s)
+                elif isinstance(ev, Failed):
+                    failed = ev
+        finally:
+            send_q.put_nowait(None)
+            await asyncio.gather(sender_task, return_exceptions=True)
+
+        answer_text = fin.text.strip() if fin else ""
+        unanswered = failed is not None or not answer_text or bool(FOLLOWUP_RE.search(answer_text))
+        if failed is not None or not answer_text:
+            await self._play_clip("followup")  # canned clip
+            answer_text = answer_text or clip_text("followup", self.cfg.presenter_name)
+        if last_play:
+            await self.tracker.wait(last_play[-1][0], last_play[-1][1], 25.0)
+            self.echo.mark_end(time.monotonic())
+
+        total_ms = (time.monotonic() - t_end) * 1000
+        marks = [t for t in (filler_at, first_audio[0] if first_audio else None) if t]
+        first_audio_ms = (min(marks) - t_end) * 1000 if marks else None
+        model = fin.model if fin else ("canned-clip" if failed else "")
+        info = M.ModelInfo(model=model, first_token_ms=round(fin.first_token_ms, 1) if fin and fin.first_token_ms else
+                           (round(failed.first_token_ms, 1) if failed and failed.first_token_ms else None),
+                           first_audio_ms=round(first_audio_ms, 1) if first_audio_ms is not None else None,
+                           total_ms=round(total_ms, 1), fallback_used=fallback_used or (fin.fallback_used if fin else False),
+                           question=question)
+        self.last_model_info = info.wire()
+        await self._send(info)
+        record = {"ts": now_iso(), "session_id": self.session_id, "deck_id": self.deck_id, "slide_n": self.playhead[0],
+                  "sentence_i": self.playhead[1], "trigger": trigger, "question": question, "answer": answer_text,
+                  "model": model, "first_token_ms": info.first_token_ms, "first_audio_ms": info.first_audio_ms,
+                  "total_ms": info.total_ms, "fallback": info.fallback_used, "unanswered": unanswered}
+        self.interruptions.append(record)
+        self._history.append((question, answer_text))
+        try:
+            self.svc.logs.add_interruption(self.session_id, record)
+            if unanswered:
+                entry = {"ts": record["ts"], "deck_id": self.deck_id, "session_id": self.session_id,
+                         "slide_n": record["slide_n"], "question": question}
+                self.unanswered.append(entry)
+                self.svc.logs.add_unanswered(entry)
+        except Exception as e:  # logging must never break the talk
+            log.warning("log write failed: %s", e)
+        await self._send(self._summary())
+
+        # back to listening (interrupt flow continues in _qa_loop; open Q&A returns to OPEN_QA)
+        self.buf.reset()
+        self.buf.capturing = True
+        while not self._qa_q.empty():  # drop stale markers captured while answering
+            self._qa_q.get_nowait()
+        target = S.OPEN_QA if resume_state == S.OPEN_QA else S.LISTENING
+        await self._go(target, "answered")

@@ -44,3 +44,25 @@ Legend: **REAL** = talks to the real service when its key is present; **MOCK** =
 - A React StrictMode double mount used to open two sockets; fixed by ignoring stale sockets in `PresenterClient`.
 
 **Verify manually**: upload the sample deck → Open presenter → Start; pause/resume/next/prev.
+
+---
+
+## Phase 3 — Live Q&A + voice barge-in
+**What works**
+- **Mic → Deepgram live** (`backend/stt/deepgram.py`): `interim_results`, `utterance_end_ms=1000`, `language=multi`, `smart_format`, keyterms = all trigger phrases, `vad_events`, KeepAlive, auto-reconnect with audio buffering. Tested against a local websocket server (connect, stream, parse, drop + reconnect). Browser mic: `getUserMedia({echoCancellation, noiseSuppression, autoGainControl})` → AudioWorklet → 16 kHz PCM16 over the WS, streamed continuously (also while the agent talks).
+- **Barge-in** (`session/barge_in.py`): all 14 spec triggers (+ Devanagari variants), rapidfuzz `partial_ratio >= 85` on interim transcripts (single-word triggers match whole words only, so "waiting" ≠ "wait"), confidence ≥ 0.7, 3 s post-resume cooldown, echo guard (similarity > 0.6 to the current/previous narration sentence, scaled by word overlap so a trigger phrase merely *inside* a sentence doesn't over-match). Detection is pure CPU: ~µs–ms; measured `detect_ms` < 400 asserted in tests; 136 ms browser round trip observed.
+- On match: `pause` (150 ms fade, queue cleared) → PAUSED → "Sure, go ahead." → LISTENING; >4 words after the trigger ⇒ treated as the question, no "go ahead". Hand-raise button = same event; UI toggle barge-in ON / push-to-talk only (+ hold-to-talk button).
+- **Answering**: on UtteranceEnd → `search_kb` top-3 (hybrid vector + keyword rerank, ≤1500 tokens) → Groq streaming with tools `search_kb / goto_slide / resume_presenting` → sentence streamer → per-sentence TTS → base64 MP3 over the WS → client playback queue. Filler after 1.2 s without first token; fallback chain `GROQ_QA_MODEL → GROQ_FALLBACK_MODEL → canned "I'll have Amit follow up" clip` on 429 / error / >2.5 s to first token.
+- `goto_slide` shows the slide temporarily and returns to the origin slide on resume. After the answer: "Anything else?" → 4 s window (speech loops, dismissal words or silence → "Great, let's continue." → resume at the START of the interrupted sentence). Deck end → `END` → `OPEN_QA` loop.
+- Unanswered questions (model defers or all models fail) → `data/logs/unanswered.json`; each interruption → `data/logs/sessions/{id}.jsonl`.
+- WS contract: `docs/ws.md`.
+
+**Files**: `backend/session/{barge_in,session,sentences_stream,logs}.py`, `backend/llm/qa.py`, `backend/stt/*`, `frontend/src/audio/mic.ts`, `frontend/public/pcm-worklet.js`, tests `test_phase3_*.py`.
+
+**Known issues**
+- Deepgram, Groq and ElevenLabs/Aura have only been exercised against stubs/local fakes here (no keys in the sandbox); first real run may need minor tuning (e.g. Groq param acceptance — `reasoning_effort`/`include_reasoning` are sent only to the gpt-oss family and retried without on a 400).
+- Echo guard cannot distinguish the user repeating a phrase that is literally in the current narration sentence (by design it's ignored).
+- The user can't barge in on an *answer* (only while PRESENTING) — spec scope.
+- Hash-embedder retrieval is lexical-ish; real MiniLM on your laptop is better.
+
+**Verify manually**: Start presenting, say "I have a question" (or type it in the Simulate box), then ask "how much is the Growth plan?".

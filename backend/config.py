@@ -49,6 +49,8 @@ class Settings:
     echo_threshold: float = 0.6
     question_inline_words: int = 4
     utterance_min_words: int = 2
+    listen_timeout_s: float = 12.0  # after a barge-in, how long to wait for the user to start the question
+    utterance_max_s: float = 20.0  # once speech started, max wait for UtteranceEnd
 
     @classmethod
     def from_env(cls, **overrides) -> "Settings":

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,19 @@ from .embed import Embedder
 log = logging.getLogger("rag")
 
 MAX_CONTEXT_TOKENS = 1500
+
+
+_STOP = set("a an the is are was were to of and or in on for with what how why when who which do does did you your it this that "
+            "be can could would about me i we our they their there here from at as by per much many tell show please".split())
+_TOK = re.compile(r"[a-z0-9]+")
+
+
+def _stem(w: str) -> str:
+    return w[:-1] if len(w) > 3 and w.endswith("s") else w
+
+
+def keywords(text: str) -> set[str]:
+    return {_stem(w) for w in _TOK.findall(text.lower()) if w not in _STOP and len(w) > 1}
 
 
 def approx_tokens(text: str) -> int:
@@ -99,20 +113,23 @@ class KnowledgeBase:
             n = self._col.count()
             if n == 0:
                 return []
-            res = self._col.query(query_embeddings=[vec], n_results=min(max(k * 2, k), n),
+            res = self._col.query(query_embeddings=[vec], n_results=min(max(k * 4, 12), n),
                                   where={"deck_id": deck_id})
-        out: list[Chunk] = []
+        qk = keywords(query)
+        scored: list[tuple[float, Chunk]] = []
         seen: set[str] = set()
         for doc, meta, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0]):
             key = doc[-120:]
             if key in seen:
                 continue
             seen.add(key)
-            out.append(Chunk(doc, deck_id, int(meta.get("slide_n", 0)), meta.get("source", ""), float(dist),
-                             meta.get("doc_name", "")))
-            if len(out) >= k:
-                break
-        return out
+            lex = len(qk & keywords(doc)) / len(qk) if qk else 0.0
+            # hybrid rank: vector similarity + keyword overlap (rescues numbers / proper nouns the embedder blurs)
+            scored.append(((1.0 - float(dist)) + 0.6 * lex,
+                           Chunk(doc, deck_id, int(meta.get("slide_n", 0)), meta.get("source", ""), float(dist),
+                                 meta.get("doc_name", ""))))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        return [c for _, c in scored[:k]]
 
     def count(self, deck_id: str) -> int:
         with self._lock:
