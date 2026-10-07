@@ -34,6 +34,14 @@ class Services:
         return self._kb
 
     @property
+    def hub(self):
+        from .session.hub import DebugHub
+
+        if "hub" not in self.extras:
+            self.extras["hub"] = DebugHub()
+        return self.extras["hub"]
+
+    @property
     def logs(self):
         from .session.logs import LogStore
 

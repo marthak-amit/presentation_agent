@@ -43,3 +43,11 @@ input[type=text] { background:var(--bg); border:1px solid var(--line); color:var
 .mono { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
 .overlay { position:absolute; inset:0; background:rgba(8,10,16,.9); padding:28px; overflow:auto; }
 .handup { position:absolute; top:10px; right:10px; background:rgba(0,0,0,.6); padding:4px 10px; border-radius:8px; font-size:13px; }
+.warn { background:#4d3d1f; color:var(--warn); border:1px solid #6b5420; border-radius:8px; padding:6px 12px; margin-bottom:10px; font-size:13px; }
+.kv { display:grid; grid-template-columns:140px 1fr; gap:4px 12px; }
+.kv > div:nth-child(odd) { color:var(--muted); }
+.ev { max-height:340px; overflow:auto; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px; }
+.ev div { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.big { font-size:22px; font-weight:700; }
+.interim { min-height:48px; font-size:20px; padding:10px 14px; background:var(--panel); border:1px solid var(--line); border-radius:10px; }
+.interim.final { color:var(--good); }

@@ -54,6 +54,14 @@ export default function Presenter() {
         <Link to={`/debug/${deckId}`} target="_blank">Debug ↗</Link>
       </div>
 
+      {snap.warnings.length > 0 && (
+        <div className="warn" data-testid="warnings">
+          {snap.warnings.map((w) => (
+            <div key={w}>⚠ {w}</div>
+          ))}
+        </div>
+      )}
+
       <div className="stage">
         <img className="slide" src={slide.image_url} alt={slide.title} data-testid="slide-img" />
         {snap.hand && <div className="handup">✋ question</div>}

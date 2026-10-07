@@ -66,3 +66,41 @@ Legend: **REAL** = talks to the real service when its key is present; **MOCK** =
 - Hash-embedder retrieval is lexical-ish; real MiniLM on your laptop is better.
 
 **Verify manually**: Start presenting, say "I have a question" (or type it in the Simulate box), then ask "how much is the Growth plan?".
+
+---
+
+## Phase 4 — Demo polish
+**What works**
+- **Debug page** (`/debug`, also linked from the presenter): live interim/final transcript, state badge, trigger hits (accepted *and* ignored with the reason: confidence / cooldown / echo), model used, first-token / first-audio / total latency per answer, services (real vs fake), event log, and a *Simulate speech* box routed to the active session. Backed by `/ws/debug` (`session/hub.py`, replay of the last 200 events).
+- **Session log**: every interruption `{ts, trigger, question, answer, model, first_token_ms, first_audio_ms, total_ms, fallback, unanswered}` → `data/logs/sessions/{id}.jsonl`; REST: `GET /sessions`, `GET /sessions/{id}/log`, `GET /logs/unanswered`. Unanswered → `data/logs/unanswered.json`.
+- **End screen**: overlay with *Questions asked* and *Unanswered* (live-updated during open Q&A) + "Present again".
+- **Offline safety**: presenting uses only cached MP3s (asserted: zero provider calls when the network is down), TTS circuit breaker (one failure → straight to fallback for 45 s), STT auto-reconnect with buffered audio, "Speech recognition offline / TTS degraded" banner, Q&A falls back model → fallback model → canned clip. Browser WS auto-reconnect resumes at the last playhead.
+- **README** with setup, keys, run, demo checklist, troubleshooting (echo, 429, mic permission, …). Optional `docker-compose.yml` (untested: no docker in sandbox).
+
+**Files**: `backend/session/hub.py`, `backend/api/sessions.py`, `frontend/src/pages/Debug.tsx`, `README.md`, `docker-compose.yml`, `Dockerfile.backend`, `frontend/Dockerfile`, `tests/test_phase4_polish.py`.
+
+**Verified end to end** in headless Chromium against the running servers (mock services): upload → present → barge-in (136 ms browser round trip) → answer with captions → resume; deck end → end screen with asked/unanswered lists; Debug page shows model + latencies.
+
+**Known issues**: see the final summary below.
+
+---
+
+## Final summary
+
+**Run**: `make install && make dev` → http://localhost:5173 (backend :8000). `make test` runs 82 pytest tests + the frontend type-check/build.
+
+**Real vs mocked in this build (sandbox had no API keys, HuggingFace blocked):**
+| piece | status |
+|---|---|
+| PPTX parse, LibreOffice→PDF→PNG render, Chroma, FastAPI, WebSocket protocol, state machine, barge-in detector, echo guard, QA fallback chain, sentence streaming, caching, logs, React UI, WebAudio playback/fade, mic AudioWorklet | **real**, tested (Chromium for UI/audio) |
+| Groq (narration + Q&A) | **mock** (`FakeLLM`) when no key; real `GroqLLM` verified only against a stubbed SDK stream |
+| Deepgram STT | **mock** (`sim_transcript`) when no key; real client verified against a local websocket server |
+| ElevenLabs / Aura TTS | **mock** (silent MP3 sized to the text) when no keys; request shapes verified with httpx MockTransport |
+| Embeddings | MiniLM is used when `sentence-transformers` can load it; otherwise a hashing embedder (used in the sandbox) |
+
+**Open issues / things to check on your laptop first**
+1. Run once with real keys and watch the Debug page: tune `GROQ_REASONING_EFFORT`, the 2.5 s first-token timeout, or Deepgram `endpointing` if needed.
+2. Echo is the main demo risk: use headphones or a quiet speaker; the guard cannot tell the user apart from the agent when the user repeats a phrase that is literally in the current narration sentence.
+3. Only PRESENTING can be barged into (not an in-progress answer) — per spec.
+4. `sentence-transformers` is in `requirements.txt` but not installed in the sandbox; the first real run downloads the model.
+5. Docker files are unverified.

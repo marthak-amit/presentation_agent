@@ -19,6 +19,7 @@ export interface Snapshot {
   transcript: string;
   bargeIn: boolean;
   sttStatus: string;
+  warnings: string[];
   micOn: boolean;
   micError: string;
   hand: boolean;
@@ -43,6 +44,7 @@ export const initialSnapshot: Snapshot = {
   transcript: "",
   bargeIn: true,
   sttStatus: "unknown",
+  warnings: [],
   micOn: false,
   micError: "",
   hand: false,

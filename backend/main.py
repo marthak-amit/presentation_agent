@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .api import decks as decks_api
+from .api import sessions as sessions_api
 from .session import ws as ws_api
 from .ingest import pipeline
 from .services import Services, build_services
@@ -31,6 +32,7 @@ def create_app(svc: Services | None = None) -> FastAPI:
     app.state.tasks = set()
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     app.include_router(decks_api.router)
+    app.include_router(sessions_api.router)
     app.include_router(ws_api.router)
     app.mount("/media", StaticFiles(directory=str(svc.settings.decks_dir)), name="media")
     app.mount("/stock", StaticFiles(directory=str(svc.settings.stock_dir)), name="stock")
@@ -38,7 +40,9 @@ def create_app(svc: Services | None = None) -> FastAPI:
     @app.get("/health")
     async def health():
         s = svc.settings
-        return {"ok": True, "llm": svc.llm.name, "presenter": s.presenter_name}
+        return {"ok": True, "presenter": s.presenter_name,
+                "services": {"llm": svc.llm.name, "stt": "deepgram" if s.use_real_stt else "fake",
+                             "tts": svc.tts.primary_name, "embeddings": svc.kb.embedder.name if svc._kb else "lazy"}}
 
     return app
 

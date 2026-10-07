@@ -100,6 +100,7 @@ class PresenterSession:
         self.unanswered: list[dict] = []
         self.last_trigger = ""
         self.last_model_info: dict = {}
+        self._last_stt_status = "unknown"
 
     # ------------------------------------------------------------------ plumbing
     @property
@@ -119,12 +120,14 @@ class PresenterSession:
 
     def _observe(self, wire: dict) -> None:
         """Mirror outgoing messages to the debug hub (audio payloads stripped)."""
-        hub = self.svc.extras.get("hub")
-        if hub is None:
-            return
+        hub = self.svc.hub
         if wire.get("type") == "play_answer":
             wire = {**wire, "audio_b64": f"<{len(wire.get('audio_b64', ''))} b64 chars>"}
         hub.publish(self.session_id, wire)
+
+    def _debug(self, event: dict) -> None:
+        """Debug-only event (not sent to the presenter client)."""
+        self.svc.hub.publish(self.session_id, event)
 
     def _spawn(self, coro, name: str = "") -> asyncio.Task:
         t = asyncio.create_task(coro, name=name or None)
@@ -132,10 +135,27 @@ class PresenterSession:
         t.add_done_callback(self._bg.discard)
         return t
 
+    def _warnings(self) -> list[str]:
+        w: list[str] = []
+        if self.stt.status == "down":
+            w.append("Speech recognition offline - use the hand-raise button")
+        tts = self.svc.tts
+        if getattr(tts, "real", False) and getattr(tts, "last_error", None) and tts.degraded():
+            w.append(f"TTS degraded ({tts.last_error[:80]}) - playing cached audio")
+        return w
+
     async def _emit_state(self, reason: str = "") -> None:
+        self._last_stt_status = self.stt.status
         await self._send(M.StateMsg(state=self.sm.state.value, reason=reason, slide_n=self.playhead[0],
                                     sentence_i=self.playhead[1], barge_in=self.barge_in_enabled,
-                                    stt=self.stt.status))
+                                    stt=self.stt.status, warnings=self._warnings()))
+
+    async def _status_watch(self) -> None:
+        """Re-emit state when the STT connection flips up/down (offline safety banner)."""
+        while not self.closed:
+            await asyncio.sleep(1.0)
+            if self.stt.status != self._last_stt_status:
+                await self._emit_state("stt_" + self.stt.status)
 
     async def _go(self, to: S, reason: str = "") -> bool:
         changed = self.sm.go(to, reason)
@@ -163,6 +183,7 @@ class PresenterSession:
         await self._setup_stt()
         # Warm the stock clips so the first interruption never waits on TTS.
         self._spawn(self._warm_clips(), "warm-clips")
+        self._spawn(self._status_watch(), "stt-watch")
         await self._send(M.SessionReady(
             session_id=self.session_id, deck_id=deck_id, slide_count=len(self.plan),
             presenter=self.cfg.presenter_name, barge_in=barge_in,
@@ -406,6 +427,9 @@ class PresenterSession:
             d = self.detector.check(text, conf, received_at=now)
             if d is not None:
                 await self._barge_in(d, text)
+            elif self.detector.last_reject:
+                rej, self.detector.last_reject = self.detector.last_reject, None
+                self._debug({"type": "barge_in_ignored", "trigger": rej[0], "reason": rej[1], "text": text})
         elif st in (S.LISTENING, S.OPEN_QA):
             if not self.buf.capturing and st == S.OPEN_QA:
                 self.buf.capturing = True

@@ -193,20 +193,25 @@ class BargeInDetector:
         self.clock = clock
         self.resumed_at = -1e9
         self.hits = 0
+        self.last_reject: tuple[str, str] | None = None
 
     def note_resume(self) -> None:
         self.resumed_at = self.clock()
 
     def check(self, text: str, confidence: float, *, received_at: float | None = None) -> BargeDecision | None:
         t0 = received_at if received_at is not None else self.clock()
-        if confidence < self.min_confidence:
-            return None
-        if self.clock() - self.resumed_at < self.cooldown_s:
-            return None
+        self.last_reject: tuple[str, str] | None = None
         m = find_trigger(text, threshold=self.threshold)
         if m is None:
             return None
+        if confidence < self.min_confidence:
+            self.last_reject = (m.trigger, f"confidence {confidence:.2f} < {self.min_confidence}")
+            return None
+        if self.clock() - self.resumed_at < self.cooldown_s:
+            self.last_reject = (m.trigger, "cooldown after resume")
+            return None
         if self.echo.is_echo(text):
+            self.last_reject = (m.trigger, "echo of current narration")
             return None
         self.hits += 1
         return BargeDecision(m, (self.clock() - t0) * 1000.0, m.words_after > self.inline_words)

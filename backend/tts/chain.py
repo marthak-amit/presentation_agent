@@ -27,6 +27,10 @@ class FallbackTTS:
     def real(self) -> bool:
         return any(p.name != "fake" for p in self.providers)
 
+    def degraded(self) -> bool:
+        """True while any real provider is in its cool-down window."""
+        return any(self._down_until.get(p.name, 0) > self._clock() for p in self.providers if p.name != "fake")
+
     @property
     def primary_name(self) -> str:
         return self.providers[0].name

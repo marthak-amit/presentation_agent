@@ -95,6 +95,7 @@ class StateMsg(_Msg):
     sentence_i: int
     barge_in: bool = True
     stt: str = "unknown"  # up | down | mock
+    warnings: list[str] = Field(default_factory=list)  # degraded services (offline safety banner)
 
 
 class PlaySentence(_Msg):

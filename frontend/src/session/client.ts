@@ -163,6 +163,7 @@ export class PresenterClient {
           state,
           reason: m.reason as string,
           sttStatus: m.stt as string,
+          warnings: (m.warnings as string[]) ?? [],
           bargeIn: m.barge_in as boolean,
           hand: state === "PAUSED" || state === "LISTENING" ? this.snap.hand : false,
         });
