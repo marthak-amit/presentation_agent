@@ -19,7 +19,12 @@ TRIGGERS = [
 ]
 # Deepgram `language=multi` may return Hindi in Devanagari script; same phrases, different script.
 EXTRA_TRIGGERS = ["एक सवाल", "एक मिनट", "रुको", "मेरा सवाल", "मेरा क्वेश्चन", "एक प्रश्न"]
-ALL_TRIGGERS = TRIGGERS + EXTRA_TRIGGERS
+# Wake phrase: "Hello AI" (STT may write it "Hello, A.I." / "hello a i" / "hey AI"), then the question.
+WAKE_TRIGGERS = ["hello ai", "hello a i", "hey ai", "hey a i", "hi ai", "hi a i", "okay ai", "ok ai"]
+ALL_TRIGGERS = TRIGGERS + EXTRA_TRIGGERS + WAKE_TRIGGERS
+# Short wake phrases sit close to common greetings ("hello all"), so they need a tighter fuzzy match.
+STRICT_THRESHOLD = 96
+STRICT_TRIGGERS = set(WAKE_TRIGGERS)
 
 DISMISSALS = {
     "no", "nope", "nothing", "thanks", "thank you", "that's all", "thats all", "that's it", "thats it", "go on",
@@ -95,7 +100,10 @@ def find_trigger(text: str, triggers: list[str] = ALL_TRIGGERS, threshold: int =
         if len(nt.joined) < int(len(tw) * 0.85):
             continue
         al = fuzz.partial_ratio_alignment(tw, nt.joined)
-        if al is None or al.score < threshold:
+        if al is None or al.score < max(threshold, STRICT_THRESHOLD if trig in STRICT_TRIGGERS else 0):
+            continue
+        # a wake phrase must start on a word boundary ("shello ai" is not "hello ai")
+        if trig in STRICT_TRIGGERS and al.dest_start > 0 and nt.joined[al.dest_start - 1] != " ":
             continue
         first = nt.word_index_at(al.dest_start)
         if al.dest_start < len(nt.joined) and nt.joined[al.dest_start] == " ":

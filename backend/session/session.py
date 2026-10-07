@@ -138,7 +138,7 @@ class PresenterSession:
     def _warnings(self) -> list[str]:
         w: list[str] = []
         if self.stt.status == "down":
-            w.append("Speech recognition offline - use the hand-raise button")
+            w.append("Speech recognition offline - voice commands (\"Hello AI\") won't work; use Hold to talk")
         tts = self.svc.tts
         if getattr(tts, "real", False) and getattr(tts, "last_error", None) and tts.degraded():
             w.append(f"TTS degraded ({tts.last_error[:80]}) - playing cached audio")

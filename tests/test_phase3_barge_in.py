@@ -111,3 +111,21 @@ def test_sentence_streamer_splits_incrementally():
     out += s.flush()
     assert out == ["The Growth plan is 149 dollars.", "It includes alerts!", "Dr. Lee agrees."]
     assert normalize("Hello,  World!") == "hello world"
+
+
+@pytest.mark.parametrize("text", ["Hello AI", "Hello, AI.", "hello A.I.", "hello a i", "Hey AI", "hello AI how much is the growth plan"])
+def test_hello_ai_wake_phrase_fires(text):
+    m = find_trigger(text)
+    assert m is not None and m.trigger.replace(" ", "") in ("helloai", "heyai"), text
+
+
+@pytest.mark.parametrize("text", ["hello all", "hello everyone", "say hello alice", "shello ai", "hello", "hi all"])
+def test_greetings_are_not_the_wake_phrase(text):
+    assert find_trigger(text) is None, text
+
+
+def test_hello_ai_with_inline_question_skips_go_ahead():
+    det = BargeInDetector(cooldown_s=0)
+    d = det.check("Hello AI how much is the Growth plan per month", 0.9)
+    assert d is not None and d.treat_as_question
+    assert strip_leading_trigger("Hello AI, how much is the Growth plan") == "how much is the Growth plan"

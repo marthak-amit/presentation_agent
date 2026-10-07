@@ -104,3 +104,10 @@ Legend: **REAL** = talks to the real service when its key is present; **MOCK** =
 3. Only PRESENTING can be barged into (not an in-progress answer) — per spec.
 4. `sentence-transformers` is in `requirements.txt` but not installed in the sandbox; the first real run downloads the model.
 5. Docker files are unverified.
+
+---
+
+## Follow-up: presenter name + "Hello AI" wake phrase
+- `PRESENTER_NAME` default is now `Bytes Technolab developer` (`.env.example`); narration prompt tells the model to replace any other personal name in the notes with it.
+- **Raise hand button removed** from the UI. Voice wake phrase **"Hello AI"** (also "Hello A.I.", "hello a i", "hey/hi/ok AI") pauses the talk like any other trigger; strict fuzzy threshold (96) so "hello all" does not fire. `hand_raise` WS message kept for API/tests. Hint line under the controls.
+- Tests: 96 passing.

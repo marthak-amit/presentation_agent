@@ -124,7 +124,7 @@ export class PresenterClient {
       this.set({ micOn: true, micError: "" });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      this.set({ micOn: false, micError: `Mic unavailable (${msg}). Use the hand-raise button or the simulate box.` });
+      this.set({ micOn: false, micError: `Mic unavailable (${msg}). Voice commands need the mic; use the simulate box instead.` });
     }
   }
   stopMic(): void {

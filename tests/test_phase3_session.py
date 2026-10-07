@@ -249,3 +249,16 @@ async def test_open_qa_after_deck_end(svc, deck):
     summ = c.of("summary")[-1]
     assert len(summ["questions"]) == 2
     await c.close()
+
+
+async def test_hello_ai_voice_command_replaces_the_button(svc, deck):
+    c = await presenting(svc, deck)
+    await c.sim("Hello AI", final=False)
+    hit = await c.wait_for(lambda: c.of("barge_in_hit") and c.of("barge_in_hit")[0])
+    assert hit["trigger"].replace(" ", "") == "helloai" and hit["detect_ms"] < 400
+    await c.wait_for(lambda: "go_ahead" in clips(c))
+    await c.sim("Hello AI", final=True)
+    await c.sim("how much is the growth plan per month", final=True, end=True)
+    info = await c.wait_for(lambda: c.of("model_info") and c.of("model_info")[-1])
+    assert info["question"] == "how much is the growth plan per month"  # wake phrase stripped from the question
+    await c.close()

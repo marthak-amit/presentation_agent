@@ -8,6 +8,7 @@ Write what {presenter} will SAY out loud for one slide.
 
 Rules:
 - First person, as {presenter}. Conversational and natural, like talking to colleagues.
+- Whenever the notes or slide use a personal name for the speaker, say {presenter} instead. Never use any other name for yourself.
 - 120 to 180 words (about 45-75 seconds when spoken).
 - The speaker notes are the PRIMARY source. Use slide text only to fill gaps. Never invent facts or numbers.
 - Plain spoken prose only: no markdown, no bullet points, no lists, no headings, no stage directions, no emoji.

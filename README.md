@@ -28,9 +28,9 @@ Open <http://localhost:5173>, upload a `.pptx` (`make sample` writes `tests/samp
 |---|---|---|
 | `GROQ_API_KEY` | narration + Q&A (Groq only) | **mock LLM** (template narration, extractive answers) |
 | `GROQ_QA_MODEL` / `GROQ_SCRIPT_MODEL` / `GROQ_FALLBACK_MODEL` | model ids, from env only | defaults in `.env.example` |
-| `DEEPGRAM_API_KEY` | live STT (and Aura TTS fallback) | **mock STT**: use hand-raise or the *Simulate speech* box |
+| `DEEPGRAM_API_KEY` | live STT (and Aura TTS fallback) | **mock STT**: say-it box: use the *Simulate speech* box |
 | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | your cloned voice | falls back to **Deepgram Aura**; with no keys at all → silent mock audio |
-| `PRESENTER_NAME` | the voice the agent speaks as (default `Amit`) | |
+| `PRESENTER_NAME` | the voice the agent speaks as (e.g. `Bytes Technolab developer`) | |
 
 The header of the Presenter page shows which services are real (`STT: deepgram (up) · TTS: elevenlabs · LLM: groq`) and
 `GET /health` reports the same.
@@ -42,8 +42,8 @@ blocked it falls back to a built-in hashing embedder so nothing breaks).
 1. **Ingest** (`POST /decks`): slides → PNGs, speaker notes → first-person narration (45–75 s per slide, sequential Groq calls with 429 backoff),
    narration split into sentences, everything indexed in Chroma, then **every sentence is pre-rendered to MP3** (cached; never regenerated) plus the stock clips.
 2. **Present**: the server holds the playhead `(slide, sentence)` and tells the browser what to play; the browser reports when each clip ends.
-3. **Interrupt**: the mic streams continuously to Deepgram. Saying a trigger phrase ("I have a question", "excuse me", "wait", "ek sawaal", …),
-   pressing **✋ Raise hand** or holding **Hold to talk** pauses with a 150 ms fade → "Sure, go ahead." → the agent listens.
+3. **Interrupt**: the mic streams continuously to Deepgram. Say **"Hello AI"** (or "I have a question", "excuse me", "wait", "ek sawaal", …),
+   or hold **Hold to talk**, to pause with a 150 ms fade → "Sure, go ahead." → the agent listens.
 4. **Answer**: top-3 RAG chunks → Groq (streaming, tools `search_kb / goto_slide / resume_presenting`) → sentence-by-sentence TTS → playback.
    Then "Does that answer your question? Anything else?" → 4 s window → "Great, let's continue." → resumes at the **start of the interrupted sentence**.
 5. **End**: "Questions asked" + "Unanswered" screen, then open Q&A. Unanswered questions are saved in `backend/data/logs/unanswered.json`;
@@ -59,22 +59,22 @@ Protocol details: [`docs/ws.md`](docs/ws.md). Debug page: `/debug` (live transcr
 - [ ] Use **headphones** or keep speakers low and use Chrome (echo cancellation is on, but a loud speaker next to the mic will still bleed).
 - [ ] Click **Enable microphone** and allow the permission prompt; the Debug page (second window/monitor) should show live interim text when you speak.
 - [ ] Say "I have a question" once during a dry run: the pause should land well under half a second.
-- [ ] Ask one question the deck can answer and one it cannot (should defer: "I'll have Amit follow up" and appear under *Unanswered*).
-- [ ] Know the fallbacks: **✋ Raise hand** (no STT needed), **Voice barge-in OFF + Hold to talk**, **Simulate speech** box.
+- [ ] Ask one question the deck can answer and one it cannot (should defer: "I'll have Bytes Technolab developer follow up" and appear under *Unanswered*).
+- [ ] Know the fallbacks: **Voice barge-in OFF + Hold to talk**, **Simulate speech** box.
 - [ ] Groq free tier: don't re-upload decks during the demo (narration is sequential and rate limited); Q&A falls back to `GROQ_FALLBACK_MODEL` then a canned follow-up clip on its own.
 
 ## Troubleshooting
 
 | symptom | fix |
 |---|---|
-| **The agent interrupts itself / false barge-ins** | its own voice is reaching the mic. Use headphones, lower speaker volume, or switch **Voice barge-in** off and use hand-raise / hold-to-talk. The echo guard drops transcripts that look like the current narration sentence (similarity > 0.6) and there is a 3 s cooldown after every resume. |
+| **The agent interrupts itself / false barge-ins** | its own voice is reaching the mic. Use headphones, lower speaker volume, or switch **Voice barge-in** off and use hold-to-talk. The echo guard drops transcripts that look like the current narration sentence (similarity > 0.6) and there is a 3 s cooldown after every resume. |
 | **Barge-in never fires** | check the Debug page: *Trigger hits* lists ignored matches with the reason (`confidence`, `cooldown`, `echo`). Confirm `STT: deepgram (up)`; mic permission granted; the mic icon/permission in the browser address bar. |
 | **429 / rate limited** | Narration retries with exponential backoff (honours `Retry-After`) and then switches to `GROQ_FALLBACK_MODEL`; Q&A switches immediately (model → fallback model → canned clip). Debug page shows `(fallback)`. Wait a minute or use a paid key. |
 | **Mic permission denied / no mic** | Chrome → site settings → Microphone → Allow, then click *Enable microphone*. `getUserMedia` needs `localhost` or HTTPS. The rest of the app works without a mic. |
 | **Slides look like grey placeholders** | LibreOffice is missing or failed; install it (see above) and re-upload. |
 | **Sentence audio is silent** | no TTS keys → mock silent audio (by design). Set `ELEVENLABS_*` or `DEEPGRAM_API_KEY`, then `POST /decks/{id}/audio` to upgrade mock files. |
 | **ElevenLabs works but voice is wrong** | check `ELEVENLABS_VOICE_ID` is your cloned voice's id (not its name). |
-| **Banner "Speech recognition offline"** | Deepgram connection dropped; it reconnects automatically (audio is buffered). Use hand-raise meanwhile. |
+| **Banner "Speech recognition offline"** | Deepgram connection dropped; it reconnects automatically (audio is buffered). Use Hold to talk meanwhile (it also needs STT) or the Simulate box. |
 | **Browser blocks audio** | click *Start presenting* (a user gesture is required to unlock WebAudio). |
 | **First run is slow / `sentence-transformers` download blocked** | the app falls back to a hashing embedder automatically (lower retrieval quality); fix network and delete `backend/data/chroma` to re-index with MiniLM. |
 

@@ -31,7 +31,6 @@ export default function Presenter() {
   const presenting = snap.state === "PRESENTING";
   const paused = snap.state === "PAUSED";
   const ended = snap.state === "END" || snap.state === "OPEN_QA";
-  const canQuestion = presenting || paused;
 
   return (
     <main className="page" data-state={snap.state}>
@@ -68,7 +67,7 @@ export default function Presenter() {
         {ended && (
           <div className="overlay" data-testid="end-screen">
             <h2>{snap.state === "OPEN_QA" ? "Open Q&A" : "That's the end"}</h2>
-            <p className="muted">Ask your questions out loud (or use the hand-raise button / simulate box).</p>
+            <p className="muted">Say “Hello AI” and ask your question (or use the simulate box).</p>
             <h3>Questions asked ({snap.questions.length})</h3>
             <ol>{snap.questions.map((q, i) => <li key={i}>{q.question}</li>)}</ol>
             <h3>Unanswered — follow up ({snap.unanswered.length})</h3>
@@ -98,9 +97,6 @@ export default function Presenter() {
             <button onClick={() => client.control("next")} disabled={!(presenting || paused)}>Next ⏭</button>
           </>
         )}
-        <button className={snap.hand ? "danger" : ""} onClick={() => client.handRaise()} disabled={!canQuestion && !ended} data-testid="hand">
-          ✋ Raise hand
-        </button>
         <label className="row" style={{ margin: 0 }}>
           <input type="checkbox" checked={snap.bargeIn} onChange={(e) => client.setBargeIn(e.target.checked)} data-testid="bargein" />
           Voice barge-in {snap.bargeIn ? "ON" : "OFF (push-to-talk only)"}
@@ -120,6 +116,10 @@ export default function Presenter() {
           {snap.micOn ? "Mic on — click to stop" : "Enable microphone"}
         </button>
       </div>
+      <p className="muted" data-testid="wake-hint">
+        🎤 To ask a question, say <b>“Hello AI”</b> {snap.micOn ? "(listening…)" : "— enable the microphone first"}
+        {!snap.bargeIn && " · voice commands are OFF: use Hold to talk"}
+      </p>
       {snap.micError && <p className="error">{snap.micError}</p>}
       {snap.error && <p className="error">{snap.error}</p>}
 
