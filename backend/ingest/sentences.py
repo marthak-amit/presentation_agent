@@ -28,7 +28,7 @@ def split_sentences(text: str, min_words: int = 3) -> list[str]:
         t = re.sub(rf"\b{re.escape(a)}\.", a + _PLACEHOLDER, t)
     t = re.sub(r"(?<=\d)\.(?=\d)", _PLACEHOLDER, t)  # 3.5
     t = re.sub(r"\b([A-Z])\.(?=[A-Z]\b)", r"\1" + _PLACEHOLDER, t)  # U.S.
-    parts = re.split(r"(?<=[.!?…])[\"')\]]*\s+(?=[\"'(\[]?[A-Z0-9])", t)
+    parts = re.split(r"(?<=[.!?…।॥])[\"')\]]*\s+(?=[\"'(\[]?[A-Z0-9])", t)
     parts = [p.replace(_PLACEHOLDER, ".").strip() for p in parts if p.strip()]
     merged: list[str] = []
     for p in parts:

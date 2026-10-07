@@ -129,3 +129,17 @@ def test_okay_agent_with_inline_question_skips_go_ahead():
     d = det.check("Okay Agent how much is the Growth plan per month", 0.9)
     assert d is not None and d.treat_as_question
     assert strip_leading_trigger("Okay Agent, how much is the Growth plan") == "how much is the Growth plan"
+
+
+def test_stop_words_only_count_while_answering_and_never_on_own_voice():
+    det = BargeInDetector(cooldown_s=0)
+    assert det.check("stop", 0.9) is None  # while presenting "stop" is just a word
+    d = det.check("stop", 0.9, answering=True)
+    assert d is not None and d.match.trigger == "stop"
+    det.echo.speaking("So we never stop improving, and every release gets faster than the last one.")
+    assert det.check("stop", 0.9, answering=True) is None  # the agent itself just said "stop"
+    assert "echo" in det.last_reject[1]
+    assert det.check("okay agent", 0.9, answering=True) is not None
+    det2 = BargeInDetector(cooldown_s=60)
+    det2.note_resume()
+    assert det2.check("okay agent", 0.9) is None and det2.check("okay agent", 0.9, answering=True) is not None

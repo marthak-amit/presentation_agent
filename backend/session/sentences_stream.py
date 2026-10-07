@@ -5,7 +5,7 @@ import re
 
 from ..ingest.sentences import clean_narration
 
-_BOUNDARY = re.compile(r"(?<=[.!?])[\"')\]]*\s+(?=\S)")
+_BOUNDARY = re.compile(r"(?<=[.!?।॥])[\"')\]]*\s+(?=\S)")
 _ABBR = re.compile(r"\b(?:Mr|Mrs|Ms|Dr|Prof|vs|etc|e\.g|i\.e|approx|No)\.$", re.I)
 
 

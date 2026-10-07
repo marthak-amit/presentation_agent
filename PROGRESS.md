@@ -132,3 +132,12 @@ Legend: **REAL** = talks to the real service when its key is present; **MOCK** =
 
 ## Fix: backend abort on macOS during answers
 `failed assertion _status < MTLCommandBufferStatusCommitted ... IOGPUMetalCommandBuffer` killed the backend while answering: sentence-transformers ran on the Apple GPU (MPS) and was called from several threads (retrieval + pointer matching). `STEmbedder` now uses `device="cpu"` and a lock. Regression test added.
+
+---
+
+## Round 2: core hardening
+- Orange word boxes removed from the highlighter (marker + arrow only).
+- **Setup check** (`/check` page, `GET /preflight`): real requests verify LibreOffice/poppler, Groq key *and that the configured model ids exist*, Deepgram live-connection with the full parameter set, ElevenLabs key + voice id, embeddings, data folder; mic level meter; "Play voice test". Each failure says how to fix it.
+- **Deepgram degrade**: HTTP 400 on optional params (keyterms/multilingual) → automatically retries with simpler settings; 401/403 → explicit "API key rejected" banner on the presenter page.
+- **Warm-up at server start**: embedder, stock clips and the Groq TLS connection are prepared before the first question. Prompt: answer from the retrieved context first (fewer tool round trips), answer in the language of the question; sentence splitter understands the Hindi danda.
+- **Interrupt an answer**: while the agent answers, "Okay Agent …", "wait", "excuse me", "stop", "enough" fade the audio out in 150 ms and hand the floor back (own-voice guard: ignored if the agent's current sentence contains that word).

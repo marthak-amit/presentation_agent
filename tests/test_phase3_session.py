@@ -268,3 +268,58 @@ async def test_okay_agent_voice_command_stops_the_talk_and_listens(svc, deck):
     info = await c.wait_for(lambda: c.of("model_info") and c.of("model_info")[-1])
     assert info["question"] == "how much is the growth plan per month"  # wake phrase stripped from the question
     await c.close()
+
+
+async def _answering_with_slow_audio(svc, deck):
+    c = await presenting(svc, deck, play_s=2.5)
+    await c.session.handle(M.HandRaise())
+    await c.wait_state("LISTENING")
+    await c.say("what are the starter growth and scale pricing tiers in dollars")
+    await c.wait_for(lambda: c.of("play_answer"), desc="answer audio")
+    await asyncio.sleep(1.1)  # the first second after an answer starts is protected against its own echo
+    assert c.session.state.value == "ANSWERING"
+    return c
+
+
+async def test_audience_can_interrupt_an_answer_with_the_wake_phrase(svc, deck):
+    c = await _answering_with_slow_audio(svc, deck)
+    n_answers = len(c.of("play_answer"))
+    await c.sim("Okay Agent", final=False)
+    hit = await c.wait_for(lambda: [m for m in c.of("barge_in_hit") if m["source"] == "interrupt"])
+    assert hit[0]["trigger"] in ("okay agent", "ok agent")
+    await c.wait_state("LISTENING")
+    assert c.of("pause")[-1]["reason"] == "interrupt" and c.of("pause")[-1]["fade_ms"] == 150
+    await asyncio.sleep(1.0)
+    assert len(c.of("play_answer")) == n_answers  # nothing more of the old answer is sent or played
+    await c.wait_for(lambda: clips(c).count("go_ahead") >= 2, desc="go ahead again")
+    await c.sim("Okay Agent", final=True)
+    await c.sim("when does the mobile app ship", final=True, end=True)
+    await c.wait_for(lambda: c.of("model_info"), desc="the new answer (the interrupted one is never reported)")
+    assert c.of("model_info")[-1]["question"] == "when does the mobile app ship"
+    assert len(svc.logs.read_session(c.session.session_id)) == 1
+    await c.close()
+
+
+async def test_stop_word_cuts_the_answer_and_asks_if_that_helped(svc, deck):
+    c = await _answering_with_slow_audio(svc, deck)
+    n = clips(c).count("anything_else")
+    await c.sim("stop", final=False)
+    await c.wait_state("LISTENING")
+    await c.wait_for(lambda: clips(c).count("anything_else") > n, desc="anything else?")
+    await c.wait_for(lambda: "continue" in clips(c), desc="no reply -> continue")
+    await c.wait_state("PRESENTING", timeout=10)
+    await c.close()
+
+
+async def test_interrupt_is_off_when_barge_in_is_off(svc, deck):
+    c = await presenting(svc, deck, play_s=2.5)
+    await c.session.handle(M.HandRaise())
+    await c.wait_state("LISTENING")
+    await c.session.handle(M.SetBargeIn(enabled=False))
+    await c.say("what are the starter growth and scale pricing tiers in dollars")
+    await c.wait_for(lambda: c.of("play_answer"))
+    await asyncio.sleep(1.1)
+    await c.sim("stop", final=False)
+    await asyncio.sleep(0.4)
+    assert c.session.state.value == "ANSWERING"
+    await c.close()

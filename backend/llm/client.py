@@ -59,6 +59,13 @@ class GroqLLM:
                 return await self._client.chat.completions.create(**kwargs)
             raise
 
+    async def warm(self) -> None:
+        """Open the TLS connection ahead of the first question (saves ~100-300 ms on the first answer)."""
+        try:
+            await self._client.models.list()
+        except Exception as e:
+            log.debug("groq warm-up failed: %s", e)
+
     async def complete(self, *, model, messages, max_tokens=1200, temperature=0.6) -> str:
         resp = await self._create(
             dict(model=model, messages=messages, max_tokens=max_tokens, temperature=temperature, stream=False)

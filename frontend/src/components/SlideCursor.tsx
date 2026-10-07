@@ -6,7 +6,6 @@ import { ActivePointer } from "../session/types";
  * Live "reading" highlighter + human-like mouse arrow.
  *  - the arrow travels on a curved ease-in-out path to the start of the line being talked about,
  *  - a marker then paints over the line(s) in step with the voice (strong fill = already said),
- *  - words of the line that the speaker mentions pop out as the marker passes them.
  * Coordinates are normalised (0..1) to the slide image; everything is recomputed per frame so resizing is safe.
  */
 type P = [number, number];
@@ -172,14 +171,6 @@ export default function SlideCursor({
         const lp = clamp((progress - c.cum[i]) / Math.max(1e-6, c.cum[i + 1] - c.cum[i]), 0, 1);
         const fill = lineEl.querySelector<HTMLElement>(".hl-fill");
         if (fill) fill.style.width = `${lp * lw + (lp > 0 ? pad : 0)}px`;
-        lineEl.querySelectorAll<HTMLElement>(".hl-key").forEach((k, wi) => {
-          const w = L.words.filter((x) => x.key)[wi];
-          if (!w) return;
-          k.style.left = `${(w.x0 - L.x0) * cr.w + pad - 3}px`;
-          k.style.width = `${(w.x1 - w.x0) * cr.w + 6}px`;
-          const passed = lp * (L.x1 - L.x0) + L.x0 >= w.x0 + (w.x1 - w.x0) * 0.5;
-          k.classList.toggle("on", passed);
-        });
       });
     };
     raf = requestAnimationFrame(tick);
@@ -188,14 +179,9 @@ export default function SlideCursor({
 
   return (
     <div ref={layer} className="cursor-layer" aria-hidden style={{ display: visible ? "block" : "none" }}>
-      {lines.map((L, i) => (
+      {lines.map((_, i) => (
         <div key={`${pointer?.key}-${i}`} data-hl={i} className="hl-line">
           <div className="hl-fill" />
-          {L.words
-            .filter((w) => w.key)
-            .map((_, wi) => (
-              <div key={wi} className="hl-key" />
-            ))}
         </div>
       ))}
       <div ref={arrow} className="cursor-arrow" style={{ opacity: started.current || pointer ? 1 : 0 }}>

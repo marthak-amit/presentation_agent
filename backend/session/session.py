@@ -20,8 +20,8 @@ from ..stt.deepgram import DeepgramSTT
 from ..stt.fake import FakeSTT
 from ..tts.clips import clip_text, ensure_clip
 from . import messages as M
-from .barge_in import (ALL_TRIGGERS, BargeDecision, BargeInDetector, EchoGuard, UtteranceBuffer, is_dismissal,
-                       strip_leading_trigger)
+from .barge_in import (ALL_TRIGGERS, STOP_TRIGGERS, BargeDecision, BargeInDetector, EchoGuard, UtteranceBuffer,
+                       is_dismissal, strip_leading_trigger)
 from .plan import DeckPlan
 from .playback import PlaybackTracker
 from .sentences_stream import SentenceStreamer
@@ -105,6 +105,10 @@ class PresenterSession:
         self._matcher: CursorMatcher | None = None
         self._cursor_map: dict = {}
         self._answer_slide: int | None = None
+        self._answer_task: asyncio.Task | None = None
+        self._answer_started = 0.0
+        self._answer_interrupted: BargeDecision | None = None
+        self._qa_mode = "interrupt"
         self._last_stt_status = "unknown"
 
     # ------------------------------------------------------------------ plumbing
@@ -143,7 +147,8 @@ class PresenterSession:
     def _warnings(self) -> list[str]:
         w: list[str] = []
         if self.stt.status == "down":
-            w.append("Speech recognition offline - voice commands (\"Okay Agent\") won't work; use Hold to talk")
+            why = getattr(self.stt, "last_error", None)
+            w.append("Speech recognition offline" + (f": {why}" if why else "") + " - voice commands won't work for now")
         tts = self.svc.tts
         if getattr(tts, "real", False) and getattr(tts, "last_error", None) and tts.degraded():
             w.append(f"TTS degraded ({tts.last_error[:80]}) - playing cached audio")
@@ -496,6 +501,18 @@ class PresenterSession:
             elif self.detector.last_reject:
                 rej, self.detector.last_reject = self.detector.last_reject, None
                 self._debug({"type": "barge_in_ignored", "trigger": rej[0], "reason": rej[1], "text": text})
+        elif st == S.ANSWERING:
+            # the audience can cut an answer short: "Okay Agent ..." / "wait" / "stop"
+            task = self._answer_task
+            if (task is None or task.done() or not self.barge_in_enabled or self._answer_interrupted
+                    or time.monotonic() - self._answer_started < 1.0):
+                return
+            d = self.detector.check(text, conf, received_at=now, answering=True)
+            if d is not None:
+                await self._interrupt_answer(d, text)
+            elif self.detector.last_reject:
+                rej, self.detector.last_reject = self.detector.last_reject, None
+                self._debug({"type": "barge_in_ignored", "trigger": rej[0], "reason": rej[1], "text": text})
         elif st in (S.LISTENING, S.OPEN_QA):
             if not self.buf.capturing and st == S.OPEN_QA:
                 self.buf.capturing = True
@@ -534,6 +551,34 @@ class PresenterSession:
         await self._pause("barge_in")  # pause message goes to the client before anything else
         self._start_qa("interrupt", skip_go_ahead=d.treat_as_question, trigger=m.trigger)
 
+    async def _interrupt_answer(self, d: BargeDecision, text: str) -> None:
+        log.info("answer interrupted by %r", d.match.trigger)
+        self._answer_interrupted = d
+        self.buf.seed_from_trigger(text, d.match.start_char)
+        await self._send(M.BargeInHit(trigger=d.match.trigger, text=text, score=d.match.score,
+                                      detect_ms=round(d.detect_ms, 2), source="interrupt"))
+        if self._answer_task is not None:
+            self._answer_task.cancel()
+
+    async def _run_answer(self, question: str, t_end: float, trigger: str) -> BargeDecision | None:
+        """Run one answer as its own task so the audience can interrupt it. Returns the interrupting decision, if any."""
+        self._answer_interrupted = None
+        self._answer_started = time.monotonic()
+        self._answer_task = asyncio.create_task(self._answer(question, t_end, trigger), name="answer")
+        try:
+            await self._answer_task
+            return None
+        except asyncio.CancelledError:
+            d = self._answer_interrupted
+            if d is None:
+                raise  # the whole Q&A was cancelled (restart / close)
+            self.tracker.cancel_all()
+            await self._send(M.Pause(fade_ms=150, reason="interrupt"))
+            await self._go(S.OPEN_QA if self._qa_mode == "open" else S.LISTENING, "interrupted")
+            return d
+        finally:
+            self._answer_task = None
+
     async def _on_hand_raise(self) -> None:
         if self.state not in (S.PRESENTING, S.PAUSED) or self._qa_task is not None:
             return
@@ -568,6 +613,7 @@ class PresenterSession:
     # ================================================================== Q&A flow
     def _start_qa(self, mode: str, skip_go_ahead: bool = False, trigger: str = "") -> None:
         self._qa_q = asyncio.Queue()
+        self._qa_mode = mode
         if skip_go_ahead:
             self._qa_q.put_nowait(("speech",))
         self._qa_task = asyncio.create_task(self._qa_loop(mode, skip_go_ahead, trigger), name=f"qa-{mode}")
@@ -594,7 +640,10 @@ class PresenterSession:
                 got = await self._next_question(self.cfg.listen_timeout_s)
                 while got is not None:
                     q, t_end = got
-                    await self._answer(q, t_end, trigger)
+                    cut = await self._run_answer(q, t_end, trigger)
+                    if cut is not None:  # the audience interrupted the answer
+                        got = await self._after_interrupt(cut, self.cfg.followup_wait_s)
+                        continue
                     if self._resume_requested:
                         break
                     await self._play_clip("anything_else", wait=True)
@@ -605,17 +654,32 @@ class PresenterSession:
                     await self._play_clip("continue", wait=True)
                 await self._resume_after_qa()
             else:  # OPEN_QA: keep answering until the session ends
+                got = None
                 while True:
-                    got = await self._next_question(None)
+                    got = got or await self._next_question(None)
                     if got is None:
                         continue
-                    await self._answer(got[0], got[1], "open_qa")
+                    cut = await self._run_answer(got[0], got[1], "open_qa")
+                    got = await self._after_interrupt(cut, None) if cut is not None else None
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("Q&A loop crashed")
             if mode == "interrupt" and not self.closed:
                 await self._resume_after_qa()
+
+    async def _after_interrupt(self, cut: BargeDecision, followup_wait: float | None):
+        """After the audience cut an answer short: 'stop' -> ask if that answered it; anything else -> let them speak."""
+        stop = cut.match.trigger in STOP_TRIGGERS
+        if stop:
+            await self._play_clip("anything_else", wait=True)
+            got = await self._next_question(followup_wait)
+            return None if got is not None and is_dismissal(got[0]) else got
+        if not cut.treat_as_question:
+            await self._play_clip("go_ahead")
+        else:
+            self._qa_q.put_nowait(("speech",))
+        return await self._next_question(self.cfg.listen_timeout_s if self._qa_mode != "open" else None)
 
     async def _abort_qa_and_resume(self) -> None:
         await self._cancel_qa()
@@ -681,9 +745,13 @@ class PresenterSession:
             self._answer_slide = slide
             return audio, slide, pointer
 
+        synth_tasks: list[asyncio.Task] = []
+
         def speak(text: str) -> None:
             shown = self._answer_slide or self.playhead[0]
-            send_q.put_nowait((text, asyncio.create_task(synth_with_pointer(text, shown))))
+            t = asyncio.create_task(synth_with_pointer(text, shown))
+            synth_tasks.append(t)
+            send_q.put_nowait((text, t))
 
         streamer = SentenceStreamer()
         toolbox = SessionToolbox(self)
@@ -708,6 +776,12 @@ class PresenterSession:
                         speak(s)
                 elif isinstance(ev, Failed):
                     failed = ev
+        except asyncio.CancelledError:
+            # interrupted / aborted: nothing queued may be spoken any more
+            sender_task.cancel()
+            for t in synth_tasks:
+                t.cancel()
+            raise
         finally:
             send_q.put_nowait(None)
             await asyncio.gather(sender_task, return_exceptions=True)

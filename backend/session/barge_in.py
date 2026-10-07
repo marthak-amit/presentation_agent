@@ -22,6 +22,8 @@ EXTRA_TRIGGERS = ["एक सवाल", "एक मिनट", "रुको", 
 # Wake phrase: "Okay Agent" (STT may write it "OK, agent" / "o.k. agent" / "okay, Agent!"), then the question.
 WAKE_TRIGGERS = ["okay agent", "ok agent", "o k agent"]
 ALL_TRIGGERS = TRIGGERS + EXTRA_TRIGGERS + WAKE_TRIGGERS
+# Only meaningful while the agent is ANSWERING: cut the answer short.
+STOP_TRIGGERS = ["stop", "stop it", "okay stop", "that's enough", "thats enough", "enough"]
 # Short wake phrases sit close to ordinary speech, so they need a tight, word-bounded match.
 STRICT_THRESHOLD = 96
 STRICT_TRIGGERS = set(WAKE_TRIGGERS)
@@ -179,6 +181,11 @@ class EchoGuard:
     def mark_end(self, now: float) -> None:
         self.last_end = now
 
+    def mentions(self, phrase: str) -> bool:
+        """Does a sentence the agent just spoke contain this phrase? (then hearing it is most likely our own voice)"""
+        p = f" {normalize(phrase)} "
+        return any(p in f" {normalize(sent)} " for sent in self.recent[-2:])
+
     def is_echo(self, transcript: str) -> bool:
         if not self.recent:
             return False
@@ -209,20 +216,22 @@ class BargeInDetector:
     def note_resume(self) -> None:
         self.resumed_at = self.clock()
 
-    def check(self, text: str, confidence: float, *, received_at: float | None = None) -> BargeDecision | None:
+    def check(self, text: str, confidence: float, *, received_at: float | None = None,
+              answering: bool = False) -> BargeDecision | None:
+        """`answering=True`: we are speaking an answer; stop words count too and the post-resume cooldown does not apply."""
         t0 = received_at if received_at is not None else self.clock()
         self.last_reject: tuple[str, str] | None = None
-        m = find_trigger(text, threshold=self.threshold)
+        m = find_trigger(text, ALL_TRIGGERS + (STOP_TRIGGERS if answering else []), threshold=self.threshold)
         if m is None:
             return None
         if confidence < self.min_confidence:
             self.last_reject = (m.trigger, f"confidence {confidence:.2f} < {self.min_confidence}")
             return None
-        if self.clock() - self.resumed_at < self.cooldown_s:
+        if not answering and self.clock() - self.resumed_at < self.cooldown_s:
             self.last_reject = (m.trigger, "cooldown after resume")
             return None
-        if self.echo.is_echo(text):
-            self.last_reject = (m.trigger, "echo of current narration")
+        if self.echo.is_echo(text) or self.echo.mentions(m.trigger):
+            self.last_reject = (m.trigger, "echo of what the agent is saying")
             return None
         self.hits += 1
         return BargeDecision(m, (self.clock() - t0) * 1000.0, m.words_after > self.inline_words)

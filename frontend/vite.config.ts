@@ -12,6 +12,7 @@ export default defineConfig({
       "/stock": backend,
       "/sessions": backend,
       "/logs": backend,
+      "/preflight": backend,
       "/health": backend,
       "/ws": { target: backend, ws: true },
     },
