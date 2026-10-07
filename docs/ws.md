@@ -24,7 +24,7 @@ IDLE ──start──▶ PRESENTING ──trigger/hand-raise/PTT──▶ PAUSE
 |---|---|---|
 | `start_session` | `deck_id`, `barge_in=true`, `slide_n?`, `sentence_i=0` | **must be first.** `slide_n/sentence_i` resume position after a reconnect |
 | `control` | `action`: `start\|pause\|resume\|next\|prev\|goto\|restart`, `slide_n?` | transport. `resume` while LISTENING/ANSWERING skips the Q&A |
-| `hand_raise` | – | same pause event as a voice trigger. No UI button any more (voice command **\"Hello AI\"** replaced it); kept for API/tests |
+| `hand_raise` | – | same pause event as a voice trigger. No UI button any more (voice command **\"Hello One\"** replaced it); kept for API/tests |
 | `set_barge_in` | `enabled` | UI toggle: voice barge-in ON / push-to-talk only |
 | `ptt` | `active` | push-to-talk. `true` pauses & listens (no "go ahead"); `false` ends the utterance immediately |
 | `audio_ended` | `play_id`, `interrupted=false` | client finished (or was cut off) playing an item. **Server sequencing depends on this**; if it never arrives the server times out and continues |

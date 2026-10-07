@@ -31,6 +31,8 @@ export default function Presenter() {
   const presenting = snap.state === "PRESENTING";
   const paused = snap.state === "PAUSED";
   const ended = snap.state === "END" || snap.state === "OPEN_QA";
+  const listening = snap.state === "LISTENING" || (paused && snap.reason !== "user");
+  const answering = snap.state === "ANSWERING";
 
   return (
     <main className="page" data-state={snap.state}>
@@ -63,11 +65,17 @@ export default function Presenter() {
 
       <div className="stage">
         <img className="slide" src={slide.image_url} alt={slide.title} data-testid="slide-img" />
-        {snap.hand && <div className="handup">✋ question</div>}
+        {listening && (
+          <div className="listening" data-testid="listening">
+            <span className="pulse" /> Listening… ask your question
+            {snap.transcript && <div className="heard">“{snap.transcript}”</div>}
+          </div>
+        )}
+        {answering && <div className="listening answering" data-testid="answering"><span className="pulse" /> Answering…</div>}
         {ended && (
           <div className="overlay" data-testid="end-screen">
             <h2>{snap.state === "OPEN_QA" ? "Open Q&A" : "That's the end"}</h2>
-            <p className="muted">Say “Hello AI” and ask your question (or use the simulate box).</p>
+            <p className="muted">Say “Hello One” and ask your question (or use the simulate box).</p>
             <h3>Questions asked ({snap.questions.length})</h3>
             <ol>{snap.questions.map((q, i) => <li key={i}>{q.question}</li>)}</ol>
             <h3>Unanswered — follow up ({snap.unanswered.length})</h3>
@@ -117,7 +125,7 @@ export default function Presenter() {
         </button>
       </div>
       <p className="muted" data-testid="wake-hint">
-        🎤 To ask a question, say <b>“Hello AI”</b> {snap.micOn ? "(listening…)" : "— enable the microphone first"}
+        🎤 To ask a question, say <b>“Hello One”</b> {snap.micOn ? "(listening…)" : "— enable the microphone first"}
         {!snap.bargeIn && " · voice commands are OFF: use Hold to talk"}
       </p>
       {snap.micError && <p className="error">{snap.micError}</p>}

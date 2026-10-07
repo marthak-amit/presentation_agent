@@ -19,10 +19,10 @@ TRIGGERS = [
 ]
 # Deepgram `language=multi` may return Hindi in Devanagari script; same phrases, different script.
 EXTRA_TRIGGERS = ["एक सवाल", "एक मिनट", "रुको", "मेरा सवाल", "मेरा क्वेश्चन", "एक प्रश्न"]
-# Wake phrase: "Hello AI" (STT may write it "Hello, A.I." / "hello a i" / "hey AI"), then the question.
-WAKE_TRIGGERS = ["hello ai", "hello a i", "hey ai", "hey a i", "hi ai", "hi a i", "okay ai", "ok ai"]
+# Wake phrase: "Hello One" (STT may write it "Hello, 1." / "hello won" / "hello wan"), then the question.
+WAKE_TRIGGERS = ["hello one", "hello 1", "hello won", "hello wan"]
 ALL_TRIGGERS = TRIGGERS + EXTRA_TRIGGERS + WAKE_TRIGGERS
-# Short wake phrases sit close to common greetings ("hello all"), so they need a tighter fuzzy match.
+# Short wake phrases sit close to ordinary speech ("hello once", "hello on"), so they need a tight match.
 STRICT_THRESHOLD = 96
 STRICT_TRIGGERS = set(WAKE_TRIGGERS)
 
@@ -97,14 +97,17 @@ def find_trigger(text: str, triggers: list[str] = ALL_TRIGGERS, threshold: int =
                     best = _mk(nt, trig, sc, wi, wi + 1)
             continue
         # Avoid matching a half-spoken trigger ("i have") by requiring most of the phrase to be present.
-        if len(nt.joined) < int(len(tw) * 0.85):
+        if len(nt.joined) < int(len(tw) * (1.0 if trig in STRICT_TRIGGERS else 0.85)):
             continue
         al = fuzz.partial_ratio_alignment(tw, nt.joined)
         if al is None or al.score < max(threshold, STRICT_THRESHOLD if trig in STRICT_TRIGGERS else 0):
             continue
-        # a wake phrase must start on a word boundary ("shello ai" is not "hello ai")
-        if trig in STRICT_TRIGGERS and al.dest_start > 0 and nt.joined[al.dest_start - 1] != " ":
-            continue
+        # a wake phrase must sit on word boundaries
+        if trig in STRICT_TRIGGERS and (
+            (al.dest_start > 0 and nt.joined[al.dest_start - 1] != " ")
+            or (al.dest_end < len(nt.joined) and nt.joined[al.dest_end] != " ")
+        ):
+            continue  # "shello one" / "hello once" / "hello 10" are not the wake phrase
         first = nt.word_index_at(al.dest_start)
         if al.dest_start < len(nt.joined) and nt.joined[al.dest_start] == " ":
             first += 1

@@ -167,7 +167,7 @@ export class PresenterClient {
           bargeIn: m.barge_in as boolean,
           hand: state === "PAUSED" || state === "LISTENING" ? this.snap.hand : false,
         });
-        if (state === "IDLE") this.set({ caption: "", prevCaption: "", captionKind: "" });
+        if (state === "IDLE" || state === "LISTENING") this.set({ caption: "", prevCaption: "", captionKind: "", transcript: "" });
         break;
       }
       case "slide":

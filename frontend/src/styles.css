@@ -51,3 +51,9 @@ input[type=text] { background:var(--bg); border:1px solid var(--line); color:var
 .big { font-size:22px; font-weight:700; }
 .interim { min-height:48px; font-size:20px; padding:10px 14px; background:var(--panel); border:1px solid var(--line); border-radius:10px; }
 .interim.final { color:var(--good); }
+
+.listening { position:absolute; top:12px; left:12px; right:12px; background:rgba(14,40,70,.92); color:#cfe4ff; border:1px solid #2f6db5; border-radius:12px; padding:10px 14px; font-weight:600; z-index:2; }
+.listening.answering { background:rgba(50,30,80,.92); color:#e2d3ff; border-color:#7a52c9; }
+.listening .heard { font-weight:400; color:#fff; margin-top:4px; font-size:17px; }
+.pulse { display:inline-block; width:10px; height:10px; border-radius:50%; background:#ff5a5f; margin-right:8px; animation:pulse 1s infinite; }
+@keyframes pulse { 0% { box-shadow:0 0 0 0 rgba(255,90,95,.7);} 70% { box-shadow:0 0 0 10px rgba(255,90,95,0);} 100% { box-shadow:0 0 0 0 rgba(255,90,95,0);} }

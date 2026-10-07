@@ -107,7 +107,12 @@ Legend: **REAL** = talks to the real service when its key is present; **MOCK** =
 
 ---
 
-## Follow-up: presenter name + "Hello AI" wake phrase
+## Follow-up: presenter name + "Hello One" wake phrase
 - `PRESENTER_NAME` default is now `Bytes Technolab developer` (`.env.example`); narration prompt tells the model to replace any other personal name in the notes with it.
-- **Raise hand button removed** from the UI. Voice wake phrase **"Hello AI"** (also "Hello A.I.", "hello a i", "hey/hi/ok AI") pauses the talk like any other trigger; strict fuzzy threshold (96) so "hello all" does not fire. `hand_raise` WS message kept for API/tests. Hint line under the controls.
+- **Raise hand button removed** from the UI. Voice wake phrase **"Hello One"** (also "Hello 1", "hello won/wan") pauses the talk like any other trigger; strict fuzzy threshold (96) so "hello all" does not fire. `hand_raise` WS message kept for API/tests. Hint line under the controls.
 - Tests: 96 passing.
+
+## Follow-up 2: "Hello One" + visible listening state
+- Wake phrase changed to **"Hello One"** (also "Hello 1", "hello won/wan"); strict match with word boundaries, so "hello once", "hello on", "hello 10", "hello all" do not fire. "Hello AI" no longer triggers.
+- While a question is asked the talk is stopped (audio fades out in 150 ms, narration loop cancelled, nothing plays until the answer is done) and the slide shows a pulsing **"Listening… ask your question"** banner with the live transcript; **"Answering…"** while the answer plays. Verified in Chromium.
+- Known flake: `test_debug_ws_streams_events_and_routes_simulated_speech` failed once in ~5 full runs under load (passes alone); not investigated further.
