@@ -132,6 +132,7 @@ class PlaySentence(_Msg):
     url: str
     next_url: str | None = None
     pointer: Pointer | None = None
+    provider: str = ""  # which TTS made this audio (elevenlabs | aura | fake | cached)
 
 
 class PlayClip(_Msg):

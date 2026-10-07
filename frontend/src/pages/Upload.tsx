@@ -128,9 +128,12 @@ export default function Upload() {
                   <input type="file" multiple accept=".pdf,.txt,.md" hidden onChange={(e) => void onDocs(e.target.files)} />
                 </label>
               </div>
-              {(deck.audio.fake ?? 0) > 0 && (
+              {deck.audio.providers && Object.keys(deck.audio.providers).length > 0 && (
+                <p className="muted">Voice: {Object.entries(deck.audio.providers).map(([k, v]) => `${k} ×${v}`).join(", ")}</p>
+              )}
+              {((deck.audio.fake ?? 0) > 0 || (deck.audio.other_voice ?? 0) > 0) && (
                 <p className="warn">
-                  ⚠ {deck.audio.fake} sentence(s) fell back to silent mock audio because the voice service failed.{" "}
+                  ⚠ {(deck.audio.fake ?? 0) + (deck.audio.other_voice ?? 0)} sentence(s) are NOT in your configured voice (the voice service failed, so a fallback voice or silence was used).{" "}
                   <button onClick={() => void api.retryAudio(deck.deck_id).then(() => void poll(deck.deck_id))}>Retry voice generation</button>
                 </p>
               )}

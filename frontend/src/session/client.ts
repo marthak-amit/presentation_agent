@@ -158,6 +158,7 @@ export class PresenterClient {
       patch.slideN = item.slideN;
       patch.temporarySlide = item.slideN !== this.lastPos.slide;
     }
+    if (item.kind === "sentence" && item.provider) patch.voiceProvider = item.provider;
     if (item.kind === "sentence" && item.slideN !== undefined) {
       patch.slideN = item.slideN;
       patch.temporarySlide = false;
@@ -207,6 +208,7 @@ export class PresenterClient {
           slideN: m.slide_n as number,
           sentenceI: m.sentence_i as number,
           pointer: (m.pointer as Pointer | null) ?? null,
+          provider: (m.provider as string) || undefined,
         });
         if (m.next_url) this.queue.preload(m.next_url as string);
         break;

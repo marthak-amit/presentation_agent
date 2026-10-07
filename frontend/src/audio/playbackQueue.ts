@@ -28,6 +28,7 @@ export interface QueueItem {
   slideN?: number;
   sentenceI?: number;
   pointer?: Pointer | null;
+  provider?: string;
 }
 
 type Handlers = {

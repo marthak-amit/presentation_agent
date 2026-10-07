@@ -38,6 +38,7 @@ export interface Snapshot {
   pointer: ActivePointer | null;
   notice: { key: number; text: string } | null;
   sessionId: string;
+  voiceProvider: string;
   startedAt: number | null;
   questions: { question: string; answer?: string; ts?: string }[];
   unanswered: { question: string; ts?: string }[];
@@ -67,6 +68,7 @@ export const initialSnapshot: Snapshot = {
   pointer: null,
   notice: null,
   sessionId: "",
+  voiceProvider: "",
   startedAt: null,
   questions: [],
   unanswered: [],

@@ -12,7 +12,7 @@ export interface DeckInfo {
   stage: string;
   progress: number;
   error: string | null;
-  audio: { done: number; total: number; fake?: number };
+  audio: { done: number; total: number; fake?: number; other_voice?: number; providers?: Record<string, number> };
   docs: { name: string; chunks: number }[];
   tone?: string;
   length?: string;

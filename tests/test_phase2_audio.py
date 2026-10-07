@@ -361,3 +361,45 @@ async def test_changing_the_voice_regenerates_cached_audio(tmp_path):
     await AudioCache(FallbackTTS([Voice("new"), FakeTTS()])).ensure(path, "Hello there.")
     assert made == ["old", "new"]  # new voice id: regenerated
     assert json.loads(path.with_suffix(".meta.json").read_text())["voice"] == "new:m"
+
+
+async def test_audio_made_by_a_fallback_voice_is_upgraded_once_the_preferred_voice_works(tmp_path):
+    """Regression: Aura audio cached while ElevenLabs was failing must not stay forever."""
+    made = []
+
+    class Eleven:
+        name = "elevenlabs"
+        voice_key = "v:m"
+
+        def __init__(self, ok):
+            self.ok = ok
+
+        async def synth(self, text, *ctx):
+            made.append("eleven")
+            if not self.ok:
+                raise RuntimeError("401")
+            return b"\xff\xfb\x90\x00" + bytes(500)
+
+    class Aura:
+        name = "aura"
+        voice_key = "thalia"
+
+        async def synth(self, text, *ctx):
+            made.append("aura")
+            return b"\xff\xfb\x90\x00" + bytes(500)
+
+    path = tmp_path / "s0.mp3"
+    broken = FallbackTTS([Eleven(False), Aura(), FakeTTS()])
+    _, prov = await AudioCache(broken).ensure(path, "Hello there.")
+    assert prov == "aura"
+    # while ElevenLabs is still in its failure cool-down, the Aura clip is kept (no pointless retries per sentence)
+    _, prov = await AudioCache(broken).ensure(path, "Hello there.")
+    assert prov == "aura" and made == ["eleven", "aura"]
+    # ElevenLabs works now: the Aura clip is replaced
+    fixed = FallbackTTS([Eleven(True), Aura(), FakeTTS()])
+    _, prov = await AudioCache(fixed).ensure(path, "Hello there.")
+    assert prov == "elevenlabs" and made[-1] == "eleven"
+    # and it stays cached afterwards
+    n = len(made)
+    await AudioCache(fixed).ensure(path, "Hello there.")
+    assert len(made) == n

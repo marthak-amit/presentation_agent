@@ -22,14 +22,19 @@ async def pregenerate_deck_audio(svc: Services, deck_id: str) -> None:
     sem = asyncio.Semaphore(CONCURRENCY)
     done = 0
     fake = 0
+    other = 0
+    by_provider: dict[str, int] = {}
 
     async def one(n: int, i: int, text: str, prev: str, nxt: str):
-        nonlocal done, fake
+        nonlocal done, fake, other
         async with sem:
             try:
                 _, provider = await cache.ensure(store.audio_path(deck_id, n, i), text, prev, nxt)
+                by_provider[provider] = by_provider.get(provider, 0) + 1
                 if provider == "fake" and svc.tts.real:
                     fake += 1  # a real voice is configured but this sentence fell back to silent mock audio
+                elif svc.tts.primary_real and provider != svc.tts.primary_real:
+                    other += 1  # a fallback voice (Aura) made this sentence - not the configured voice
             except Exception as e:  # never fail the whole deck on one sentence
                 log.warning("audio %s/%s failed: %s", n, i, e)
             done += 1
@@ -37,7 +42,8 @@ async def pregenerate_deck_audio(svc: Services, deck_id: str) -> None:
                 store.update_meta(deck_id, audio={"done": done, "total": len(jobs)})
 
     await asyncio.gather(*(one(*j) for j in jobs))
-    store.update_meta(deck_id, audio={"done": done, "total": len(jobs), "fake": fake}, audio_provider=svc.tts.primary_name)
+    store.update_meta(deck_id, audio={"done": done, "total": len(jobs), "fake": fake, "other_voice": other,
+                                      "providers": by_provider}, audio_provider=svc.tts.primary_name)
     if fake:
         log.warning("deck %s: %d sentence(s) have silent mock audio (voice provider failed); POST /decks/%s/audio retries", deck_id, fake, deck_id)
     log.info("deck %s: %d audio files ready", deck_id, done)

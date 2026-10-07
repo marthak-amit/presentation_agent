@@ -35,6 +35,9 @@ class AudioCache:
         if meta.get("provider") == "fake" and self.tts.real:
             return False  # upgrade mock audio once a real provider exists
         provider = meta.get("provider", "")
+        primary = self.tts.primary_real
+        if primary and provider != primary and not self.tts.is_down(primary):
+            return False  # made by a fallback voice (e.g. Aura while ElevenLabs was failing): upgrade to the preferred voice
         if provider != "fake" and meta.get("voice", None) != self.tts.voice_of(provider):
             return False  # ELEVENLABS_VOICE_ID / model / Aura voice changed -> re-voice
         return True

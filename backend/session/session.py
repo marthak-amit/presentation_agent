@@ -447,7 +447,7 @@ class PresenterSession:
         store, cache = self.svc.store, self.svc.audio
         nxt = self.plan.next_pos(n, i)
         prev_text = self.plan.sentence(n, i - 1) or "" if i > 0 else ""
-        path, _provider = await cache.ensure(store.audio_path(self.deck_id, n, i), text, prev_text,
+        path, provider = await cache.ensure(store.audio_path(self.deck_id, n, i), text, prev_text,
                                              (self.plan.sentence(*nxt) or "") if nxt else "")
         next_url = None
         if nxt is not None:
@@ -463,7 +463,8 @@ class PresenterSession:
         except (IndexError, TypeError):
             box = None
         await self._send(M.PlaySentence(play_id=play_id, slide_n=n, sentence_i=i, text=text,
-                                        url=self._sentence_url(n, i), next_url=next_url, pointer=self._pointer(box)))
+                                        url=self._sentence_url(n, i), next_url=next_url, pointer=self._pointer(box),
+                                        provider=provider))
         await self.tracker.wait(play_id, fut, audio_timeout(path.stat().st_size))
         self.echo.mark_end(time.monotonic())
 

@@ -27,6 +27,14 @@ class FallbackTTS:
     def real(self) -> bool:
         return any(p.name != "fake" for p in self.providers)
 
+    def is_down(self, name: str) -> bool:
+        return self._down_until.get(name, 0) > self._clock()
+
+    @property
+    def primary_real(self) -> str:
+        """Name of the preferred (first) real provider, or '' when only the mock exists."""
+        return self.providers[0].name if self.providers and self.providers[0].name != "fake" else ""
+
     def voice_of(self, provider_name: str) -> str:
         """Identity of the voice a provider currently produces (voice id + model); stored next to every cached clip."""
         for p in self.providers:

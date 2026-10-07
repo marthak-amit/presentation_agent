@@ -134,7 +134,7 @@ export default function Presenter() {
             {snap.connected ? "connected" : "reconnecting…"}
           </span>
           <span className="muted">
-            mic: {snap.micOn ? "on" : "off"} · STT: {snap.services.stt ?? "?"} ({snap.sttStatus}) · TTS: {snap.services.tts ?? "?"} · LLM:{" "}
+            mic: {snap.micOn ? "on" : "off"} · STT: {snap.services.stt ?? "?"} ({snap.sttStatus}) · TTS: {snap.services.tts ?? "?"}{snap.voiceProvider && <> (playing: <b style={{ color: snap.voiceProvider === snap.services.tts ? "var(--good)" : "var(--warn)" }}>{snap.voiceProvider}</b>)</>} · LLM:{" "}
             {snap.services.llm ?? "?"}
           </span>
         </div>
