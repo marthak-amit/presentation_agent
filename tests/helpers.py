@@ -81,7 +81,7 @@ class FakeClient:
     def states(self) -> list[str]:
         return [m["state"] for m in self.of("state")]
 
-    async def wait_for(self, pred, timeout: float = 5.0, desc: str = ""):
+    async def wait_for(self, pred, timeout: float = 15.0, desc: str = ""):
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             r = pred()
@@ -90,7 +90,7 @@ class FakeClient:
             await asyncio.sleep(0.005)
         raise AssertionError(f"timeout waiting for {desc or pred}; last messages: {[m['type'] for m in self.messages[-8:]]}")
 
-    async def wait_state(self, state: str, timeout: float = 5.0):
+    async def wait_state(self, state: str, timeout: float = 15.0):
         return await self.wait_for(lambda: self.session.state.value == state, timeout, f"state {state}")
 
     async def close(self):

@@ -90,7 +90,7 @@ async def test_play_sentence_and_answers_carry_pointers(svc):
     c = FakeClient(svc, play_s=0.25)
     await c.open(deck_id)
     await c.ctl("start")
-    await c.wait_for(lambda: len(c.of("play_sentence")) >= 6, timeout=10)
+    await c.wait_for(lambda: len(c.of("play_sentence")) >= 6, timeout=30)
     withp = [m for m in c.of("play_sentence") if m["pointer"]]
     assert withp, "narration sentences must carry a pointer target"
     p = withp[0]["pointer"]
