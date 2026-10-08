@@ -13,6 +13,8 @@ CONCURRENCY = 2  # ElevenLabs free tier allows ~2-3 parallel requests
 
 async def pregenerate_deck_audio(svc: Services, deck_id: str) -> None:
     store, cache = svc.store, svc.audio
+    if not store.exists(deck_id):
+        return
     narration = store.narration(deck_id)
     flat = [(s["n"], i, text) for s in narration for i, text in enumerate(s["sentences"])]
     jobs = [(n, i, text, flat[k - 1][2] if k else "", flat[k + 1][2] if k + 1 < len(flat) else "")
@@ -28,6 +30,8 @@ async def pregenerate_deck_audio(svc: Services, deck_id: str) -> None:
     async def one(n: int, i: int, text: str, prev: str, nxt: str):
         nonlocal done, fake, other
         async with sem:
+            if not store.alive(deck_id):
+                return  # the deck was deleted while we were generating: stop spending credits on it
             try:
                 _, provider = await cache.ensure(store.audio_path(deck_id, n, i), text, prev, nxt)
                 by_provider[provider] = by_provider.get(provider, 0) + 1

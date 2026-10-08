@@ -23,6 +23,10 @@ export default function Script() {
   const [rows, setRows] = useState<Record<number, Row>>({});
   const [err, setErr] = useState("");
   const timer = useRef<number | undefined>(undefined);
+  const [tone, setTone] = useState("conversational");
+  const [length, setLength] = useState("standard");
+  const [allBusy, setAllBusy] = useState(false);
+  const [allMsg, setAllMsg] = useState("");
 
   const load = useCallback(async () => {
     const d = await api.getDeck(deckId);
@@ -58,6 +62,43 @@ export default function Script() {
     };
     void tick();
   }, [deckId]);
+
+  const toneInit = useRef(false);
+  useEffect(() => {
+    if (deck && !toneInit.current) {
+      toneInit.current = true;
+      setTone(deck.tone ?? "conversational");
+      setLength(deck.length ?? "standard");
+    }
+  }, [deck]);
+
+  async function rewriteEverything() {
+    if (!window.confirm("Rewrite the script of EVERY slide in this tone/length? Your manual edits will be replaced.")) return;
+    setAllBusy(true);
+    setAllMsg("Starting…");
+    try {
+      await api.rewriteAll(deckId, tone, length);
+      const poll = async () => {
+        const d = await api.getDeck(deckId);
+        setDeck(d);
+        const rw = d.rewrite;
+        if (rw?.running) {
+          setAllMsg(`Rewriting… ${rw.done}/${rw.total} slides`);
+          timer.current = window.setTimeout(() => void poll(), 1500);
+        } else {
+          setAllBusy(false);
+          setRows({});
+          await load();
+          setAllMsg(rw?.error ? `⚠ ${rw.error}` : "Done - all slides rewritten; the voice is generating…");
+          watchAudio();
+        }
+      };
+      await poll();
+    } catch (e) {
+      setAllBusy(false);
+      setAllMsg(`⚠ ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   const patch = (n: number, p: Partial<Row>) => setRows((r) => ({ ...r, [n]: { ...r[n], ...p } }));
 
@@ -106,6 +147,31 @@ export default function Script() {
         This is exactly what will be said. Edit freely: changes are saved per slide, new sentences are voiced automatically, and the answer
         index and slide highlighter follow. Open sessions pick up edits when you reload the presenter page.
       </p>
+      <section className="card">
+        <b>Style for the whole deck</b>
+        <div className="row">
+          <label className="muted">Tone{" "}
+            <select value={tone} onChange={(e) => setTone(e.target.value)} data-testid="script-tone">
+              <option value="conversational">Conversational</option>
+              <option value="formal">Formal</option>
+              <option value="energetic">Energetic</option>
+              <option value="storytelling">Storytelling</option>
+            </select>
+          </label>
+          <label className="muted">Length per slide{" "}
+            <select value={length} onChange={(e) => setLength(e.target.value)} data-testid="script-length">
+              <option value="short">Short (~30-45 s)</option>
+              <option value="standard">Standard (~45-75 s)</option>
+              <option value="long">Long (~80-100 s)</option>
+            </select>
+          </label>
+          <button onClick={() => void rewriteEverything()} disabled={allBusy} data-testid="rewrite-all">{allBusy ? "Rewriting…" : "Rewrite ALL slides"}</button>
+          <span className={allMsg.startsWith("⚠") ? "error" : "muted"}>{allMsg}</span>
+        </div>
+        <p className="muted" style={{ margin: 0 }}>
+          Tone and length are chosen when a deck is uploaded; use this to change them on a deck that already exists. Rewriting uses your speaker notes as the source again.
+        </p>
+      </section>
       {deck.slides.map((s) => {
         const r = rows[s.n];
         if (!r) return null;

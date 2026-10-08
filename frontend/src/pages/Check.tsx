@@ -15,6 +15,26 @@ interface Report {
   checks: CheckRow[];
 }
 
+interface VoiceRow {
+  voice_id: string;
+  name: string;
+  category: string;
+  detail: string;
+  current: boolean;
+}
+type VoiceState = { busy?: boolean; ok?: boolean; msg?: string; fix?: string };
+
+async function errorOf(r: Response): Promise<{ what: string; fix: string }> {
+  try {
+    const j = await r.json();
+    const d = j.detail;
+    if (d && typeof d === "object") return { what: String(d.what ?? r.statusText), fix: String(d.fix ?? "") };
+    return { what: String(d ?? r.statusText), fix: "" };
+  } catch {
+    return { what: r.statusText, fix: "" };
+  }
+}
+
 const ICON: Record<string, string> = { ok: "✅", warn: "⚠️", fail: "❌", mock: "🧪" };
 
 export default function Check() {
@@ -32,6 +52,12 @@ export default function Check() {
   const [sttHeard, setSttHeard] = useState<{ text: string; final: boolean; wake: boolean } | null>(null);
   const [sttWake, setSttWake] = useState(false);
   const [sttMsg, setSttMsg] = useState("");
+  const [voices, setVoices] = useState<VoiceRow[] | null>(null);
+  const [vState, setVState] = useState<Record<string, VoiceState>>({});
+  const [vErr, setVErr] = useState<{ what: string; fix: string } | null>(null);
+  const [vLoading, setVLoading] = useState(false);
+  const [manualId, setManualId] = useState("");
+  const [switched, setSwitched] = useState("");
   const sttRef = useRef<{ ws: WebSocket; mic: MicHandle | null } | null>(null);
 
   const run = useCallback(async () => {
@@ -56,6 +82,58 @@ export default function Check() {
       sttRef.current?.ws.close();
     };
   }, [run]);
+
+  async function loadVoices() {
+    setVLoading(true);
+    setVErr(null);
+    try {
+      const r = await fetch("/voices");
+      if (!r.ok) throw await errorOf(r);
+      setVoices(((await r.json()) as { voices: VoiceRow[] }).voices);
+    } catch (e) {
+      setVErr(e && typeof e === "object" && "what" in e ? (e as { what: string; fix: string }) : { what: String(e), fix: "" });
+    } finally {
+      setVLoading(false);
+    }
+  }
+
+  const setV = (id: string, p: VoiceState) => setVState((m) => ({ ...m, [id]: { ...m[id], ...p } }));
+
+  async function testVoice(id: string) {
+    setV(id, { busy: true, msg: "", fix: "", ok: undefined });
+    try {
+      const r = await fetch("/voices/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voice_id: id }) });
+      if (!r.ok) {
+        const e = await errorOf(r);
+        setV(id, { busy: false, ok: false, msg: e.what, fix: e.fix });
+        return;
+      }
+      const a = new Audio(URL.createObjectURL(await r.blob()));
+      await a.play();
+      setV(id, { busy: false, ok: true, msg: "Works - playing a sample", fix: "" });
+    } catch (e) {
+      setV(id, { busy: false, ok: false, msg: String(e), fix: "" });
+    }
+  }
+
+  async function useVoice(id: string) {
+    setV(id, { busy: true, msg: "", fix: "", ok: undefined });
+    try {
+      const r = await fetch("/voices/select", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voice_id: id }) });
+      if (!r.ok) {
+        const e = await errorOf(r);
+        setV(id, { busy: false, ok: false, msg: `Not switched: ${e.what}`, fix: e.fix });
+        return;
+      }
+      const j = (await r.json()) as { revoicing_decks: number };
+      setV(id, { busy: false, ok: true, msg: "Now the active voice", fix: "" });
+      setSwitched(`✅ Switched. Saved to .env. Re-voicing ${j.revoicing_decks} deck(s) in the background - new audio appears within a minute or two (the presenter header shows "playing: elevenlabs").`);
+      void run();
+      void loadVoices();
+    } catch (e) {
+      setV(id, { busy: false, ok: false, msg: String(e), fix: "" });
+    }
+  }
 
   async function toggleStt() {
     if (sttOn && sttRef.current) {
@@ -197,6 +275,41 @@ export default function Check() {
           </div>
         ))}
         {!report && !err && <p className="muted">Running checks…</p>}
+      </section>
+
+      <section className="card" data-testid="voice-picker">
+        <h3>Choose your voice</h3>
+        <p className="muted">
+          Lists the voices in your ElevenLabs account. <b>Test</b> speaks a sample and tells you if a voice cannot be used (e.g. Voice Library voices on a free plan).
+          <b> Use this voice</b> switches immediately - no .env editing or restart - and re-voices your decks.
+        </p>
+        <div className="row">
+          <button onClick={() => void loadVoices()} disabled={vLoading} data-testid="load-voices">{vLoading ? "Loading…" : voices ? "Reload voices" : "Load my voices"}</button>
+          <input type="text" placeholder="or paste a voice ID" value={manualId} onChange={(e) => setManualId(e.target.value)} data-testid="manual-voice" />
+          <button onClick={() => void testVoice(manualId.trim())} disabled={!manualId.trim()}>Test</button>
+          <button onClick={() => void useVoice(manualId.trim())} disabled={!manualId.trim()}>Use</button>
+        </div>
+        {manualId.trim() && vState[manualId.trim()]?.msg && (
+          <p className={vState[manualId.trim()].ok ? "good" : "error"}>{vState[manualId.trim()].msg} {vState[manualId.trim()].fix && <span className="fix">→ {vState[manualId.trim()].fix}</span>}</p>
+        )}
+        {vErr && <p className="error">{vErr.what} {vErr.fix && <span className="fix">→ {vErr.fix}</span>}</p>}
+        {switched && <p className="good" data-testid="switched">{switched}</p>}
+        {voices?.map((v) => {
+          const st = vState[v.voice_id] ?? {};
+          return (
+            <div key={v.voice_id} className="check-row" style={{ gridTemplateColumns: "1fr auto" }}>
+              <div>
+                <b>{v.name}</b> <span className="muted">{v.category}{v.detail ? ` · ${v.detail}` : ""}</span> {v.current && <span className="good">● active</span>}
+                {st.msg && <div className={st.ok ? "good" : "error"}>{st.msg}</div>}
+                {st.fix && <div className="fix">→ {st.fix}</div>}
+              </div>
+              <div className="row" style={{ margin: 0 }}>
+                <button onClick={() => void testVoice(v.voice_id)} disabled={st.busy}>{st.busy ? "…" : "▶ Test"}</button>
+                <button className={v.current ? "" : "primary"} onClick={() => void useVoice(v.voice_id)} disabled={st.busy || v.current}>{v.current ? "In use" : "Use this voice"}</button>
+              </div>
+            </div>
+          );
+        })}
       </section>
 
       <section className="card">

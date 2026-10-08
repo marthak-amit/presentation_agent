@@ -125,3 +125,29 @@ def test_export_endpoint(svc):
         r = http.get("/sessions/sess1/export.md")
         assert r.status_code == 200 and "attachment" in r.headers["content-disposition"] and "- [ ] **Q?**" in r.text
         assert http.get("/sessions/bad..id/export.md").status_code in (400, 404)
+
+
+def test_rewrite_all_changes_tone_for_an_existing_deck(svc):
+    seen = []
+
+    class Spy(FakeLLM):
+        async def complete(self, *, model, messages, max_tokens=1200, temperature=0.6):
+            seen.append(messages[0]["content"])
+            return await super().complete(model=model, messages=messages)
+
+    svc.llm = Spy("Amit", delay=0)
+    with TestClient(create_app(svc)) as http:
+        deck_id = _ready_deck(http)
+        seen.clear()
+        assert http.post(f"/decks/{deck_id}/narration/rewrite-all", json={"tone": "rude", "length": "short"}).status_code == 400
+        r = http.post(f"/decks/{deck_id}/narration/rewrite-all", json={"tone": "storytelling", "length": "long"})
+        assert r.status_code == 200
+        for _ in range(200):
+            d = http.get(f"/decks/{deck_id}").json()
+            if d["rewrite"] and not d["rewrite"]["running"]:
+                break
+            time.sleep(0.1)
+        assert d["rewrite"]["done"] == d["rewrite"]["total"] == 5 and d["rewrite"]["error"] is None
+        assert d["tone"] == "storytelling" and d["length"] == "long"
+        assert len(seen) == 5 and all("narrative" in s and "190 to 260 words" in s for s in seen)  # new style reached every slide
+        assert http.get("/decks").json()[0]["tone"] == "storytelling"

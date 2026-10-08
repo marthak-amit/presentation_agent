@@ -5,6 +5,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ class DeckStore:
     def __init__(self, settings: Settings):
         self.settings = settings
         settings.decks_dir.mkdir(parents=True, exist_ok=True)
+        self._deleted: set[str] = set()  # tombstones: background tasks must not resurrect a deleted deck
 
     # ids / paths ------------------------------------------------------------
     @staticmethod
@@ -53,7 +55,13 @@ class DeckStore:
         return self.settings.decks_dir / deck_id
 
     def exists(self, deck_id: str) -> bool:
-        return self.valid_id(deck_id) and (self.dir(deck_id) / "meta.json").exists()
+        if not self.valid_id(deck_id) or deck_id in self._deleted:
+            return False
+        return bool(read_json(self.dir(deck_id) / "meta.json", {}).get("deck_id"))
+
+    def alive(self, deck_id: str) -> bool:
+        """False once the deck was deleted (in-flight ingest / audio jobs check this before writing)."""
+        return deck_id not in self._deleted
 
     def source_path(self, deck_id: str) -> Path:
         return self.dir(deck_id) / "source.pptx"
@@ -80,10 +88,14 @@ class DeckStore:
         return read_json(self.dir(deck_id) / "meta.json", {}) or {}
 
     def write_meta(self, deck_id: str, meta: dict) -> None:
+        if deck_id in self._deleted:
+            return
         write_json(self.dir(deck_id) / "meta.json", meta)
 
     def update_meta(self, deck_id: str, **fields) -> dict:
         m = self.meta(deck_id)
+        if not m.get("deck_id"):  # deleted (or never created): never conjure a half-empty deck back into existence
+            return {}
         m.update(fields)
         self.write_meta(deck_id, m)
         return m
@@ -91,8 +103,16 @@ class DeckStore:
     def list_ids(self) -> list[str]:
         out = []
         for p in self.settings.decks_dir.iterdir() if self.settings.decks_dir.exists() else []:
-            if p.is_dir() and (p / "meta.json").exists():
+            if not p.is_dir() or not self.valid_id(p.name):
+                continue
+            if read_json(p / "meta.json", {}).get("deck_id"):
                 out.append(p.name)
+            elif time.time() - p.stat().st_mtime > 120:
+                # leftover of a deleted deck (e.g. audio written by a task that was still running): tidy it away.
+                # (Only when old: a deck being created right now has its folder before its meta.json.)
+                import shutil
+
+                shutil.rmtree(p, ignore_errors=True)
         return sorted(out, key=lambda d: (self.dir(d) / "meta.json").stat().st_mtime, reverse=True)
 
     # content ----------------------------------------------------------------
@@ -100,6 +120,8 @@ class DeckStore:
         return read_json(self.dir(deck_id) / "slides.json", []) or []
 
     def write_slides(self, deck_id: str, slides: list[dict]) -> None:
+        if deck_id in self._deleted:
+            return
         write_json(self.dir(deck_id) / "slides.json", slides)
 
     def pdf_path(self, deck_id: str) -> Path:
@@ -109,21 +131,28 @@ class DeckStore:
         return read_json(self.dir(deck_id) / "layout.json", {}) or {}
 
     def write_layout(self, deck_id: str, layout: dict) -> None:
+        if deck_id in self._deleted:
+            return
         write_json(self.dir(deck_id) / "layout.json", layout)
 
     def cursor_map(self, deck_id: str) -> dict:
         return read_json(self.dir(deck_id) / "cursor.json", {}) or {}
 
     def write_cursor_map(self, deck_id: str, m: dict) -> None:
+        if deck_id in self._deleted:
+            return
         write_json(self.dir(deck_id) / "cursor.json", m)
 
     def narration(self, deck_id: str) -> list[dict]:
         return read_json(self.dir(deck_id) / "narration.json", []) or []
 
     def write_narration(self, deck_id: str, narration: list[dict]) -> None:
+        if deck_id in self._deleted:
+            return
         write_json(self.dir(deck_id) / "narration.json", narration)
 
     def delete(self, deck_id: str) -> None:
         import shutil
 
+        self._deleted.add(deck_id)  # first: stop in-flight tasks from writing, then remove the files
         shutil.rmtree(self.dir(deck_id), ignore_errors=True)

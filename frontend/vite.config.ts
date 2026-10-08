@@ -13,6 +13,7 @@ export default defineConfig({
       "/sessions": backend,
       "/logs": backend,
       "/preflight": backend,
+      "/voices": backend,
       "/health": backend,
       "/ws": { target: backend, ws: true },
     },

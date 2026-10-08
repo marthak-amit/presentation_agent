@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import decks as decks_api
 from .api import preflight as preflight_api
+from .api import voices as voices_api
 from .api import sessions as sessions_api
 from .session import ws as ws_api
 from .ingest import pipeline
@@ -58,10 +59,12 @@ def create_app(svc: Services | None = None) -> FastAPI:
     app = FastAPI(title="PresenterAgent", lifespan=lifespan)
     app.state.svc = svc
     app.state.tasks = set()
-    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(CORSMiddleware, allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+                       allow_methods=["*"], allow_headers=["*"])
     app.include_router(decks_api.router)
     app.include_router(sessions_api.router)
     app.include_router(preflight_api.router)
+    app.include_router(voices_api.router)
     app.include_router(ws_api.router)
     app.mount("/media", StaticFiles(directory=str(svc.settings.decks_dir)), name="media")
     app.mount("/stock", StaticFiles(directory=str(svc.settings.stock_dir)), name="stock")

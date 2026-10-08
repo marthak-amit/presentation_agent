@@ -35,6 +35,8 @@ async def run_ingest(svc: Services, deck_id: str) -> None:
     store, st = svc.store, svc.settings
 
     def stage(name: str, progress: float, **kw):
+        if not store.alive(deck_id):
+            raise asyncio.CancelledError  # deck deleted mid-ingest
         store.update_meta(deck_id, stage=name, progress=round(progress, 3), **kw)
 
     try:
@@ -73,6 +75,9 @@ async def run_ingest(svc: Services, deck_id: str) -> None:
         store.update_meta(deck_id, status="ready", stage="ready", progress=1.0, chunks=n,
                           llm=svc.llm.name, embedder=svc.kb.embedder.name)
         log.info("deck %s ready (%d slides, %d chunks)", deck_id, len(slides), n)
+    except asyncio.CancelledError:
+        log.info("ingest of %s stopped: deck was deleted", deck_id)
+        return
     except Exception as e:
         log.error("ingest failed: %s\n%s", e, traceback.format_exc())
         store.update_meta(deck_id, status="error", stage="error", error=str(e))

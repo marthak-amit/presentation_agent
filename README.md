@@ -40,6 +40,7 @@ blocked it falls back to a built-in hashing embedder so nothing breaks).
 ## Features at a glance
 
 - **Setup check** (`/check`): real requests verify every key/model/tool, mic level meter, voice test. Run it before every demo.
+- **Voice picker** (`/check` → *Choose your voice*): test any voice in your ElevenLabs account and switch with one click (no `.env` editing, no restart).
 - **Script editor** (`/script/{deck}`): edit what will be said per slide, or ask the AI to rewrite it ("shorter", "more casual", "mention the pilot"). Only changed sentences are re-voiced; the Q&A index and slide highlighter follow. Tone (conversational / formal / energetic / storytelling) and length are chosen at upload.
 - **Live reading highlighter + mouse arrow** follow the line being spoken, in narration and in answers.
 - **Voice**: say **"Okay Agent"** then a question, or a command: "next slide", "previous slide", "go to slide 3", "pause", "continue", "repeat this slide", "start over". Cut an answer short with "Okay Agent" / "wait" / "stop". Extra wake spellings: `WAKE_PHRASES` in `.env`.

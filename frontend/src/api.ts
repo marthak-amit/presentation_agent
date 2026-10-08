@@ -16,6 +16,7 @@ export interface DeckInfo {
   docs: { name: string; chunks: number }[];
   tone?: string;
   length?: string;
+  rewrite?: { done: number; total: number; running: boolean; error: string | null } | null;
   slides: SlideInfo[];
 }
 export interface DeckSummary {
@@ -25,6 +26,8 @@ export interface DeckSummary {
   stage: string;
   progress: number;
   slide_count?: number;
+  tone?: string;
+  length?: string;
 }
 
 async function j<T>(r: Response): Promise<T> {
@@ -71,6 +74,15 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ instruction }),
+      }),
+    );
+  },
+  async rewriteAll(deckId: string, tone: string, length: string, instruction = ""): Promise<void> {
+    await j(
+      await fetch(`/decks/${deckId}/narration/rewrite-all`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tone, length, instruction }),
       }),
     );
   },

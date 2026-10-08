@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ..ingest.docs import ALLOWED, extract_text
 from ..ingest.pipeline import run_ingest
-from ..ingest.script import ScriptError, clean_sentences, regenerate_slide_script, save_slide_script
+from ..ingest.script import ScriptError, clean_sentences, regenerate_slide_script, rewrite_all, save_slide_script
 from ..llm.prompts import LENGTHS, TONES
 
 router = APIRouter()
@@ -50,6 +50,7 @@ def deck_payload(svc, deck_id: str) -> dict:
         "error": meta.get("error"),
         "audio": meta.get("audio", {"done": 0, "total": 0}),
         "docs": meta.get("docs", []),
+        "rewrite": meta.get("rewrite"),
         "tone": meta.get("tone", "conversational"),
         "length": meta.get("length", "standard"),
         "slides": out,
@@ -81,7 +82,7 @@ async def create_deck(request: Request, file: UploadFile = File(...), tone: str 
 async def list_decks(request: Request):
     svc = _svc(request)
     return [
-        {k: svc.store.meta(d).get(k) for k in ("deck_id", "name", "status", "stage", "progress", "slide_count")}
+        {k: svc.store.meta(d).get(k) for k in ("deck_id", "name", "status", "stage", "progress", "slide_count", "tone", "length")}
         for d in svc.store.list_ids()
     ]
 
@@ -217,3 +218,26 @@ async def delete_deck(deck_id: str, request: Request):
         pass
     svc.store.delete(deck_id)
     return {"deleted": deck_id}
+
+
+class RewriteAll(BaseModel):
+    tone: str = "conversational"
+    length: str = "standard"
+    instruction: str = ""
+
+
+@router.post("/decks/{deck_id}/narration/rewrite-all")
+async def rewrite_all_narration(deck_id: str, body: RewriteAll, request: Request):
+    """Rewrite the script of EVERY slide in a new tone/length (runs in the background; poll GET /decks/{id}.rewrite)."""
+    svc = _svc(request)
+    if not svc.store.exists(deck_id):
+        raise HTTPException(404, "deck not found")
+    if svc.store.meta(deck_id).get("status") != "ready":
+        raise HTTPException(409, "deck is still processing")
+    if body.tone not in TONES or body.length not in LENGTHS:
+        raise HTTPException(400, f"tone must be one of {list(TONES)}, length one of {list(LENGTHS)}")
+    if (svc.store.meta(deck_id).get("rewrite") or {}).get("running"):
+        raise HTTPException(409, "a rewrite is already running for this deck")
+    svc.store.update_meta(deck_id, rewrite={"done": 0, "total": len(svc.store.slides(deck_id)), "running": True, "error": None})
+    _background(request, rewrite_all(svc, deck_id, body.tone, body.length, body.instruction.strip()[:300]))
+    return {"deck_id": deck_id, "status": "started"}

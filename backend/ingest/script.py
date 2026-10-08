@@ -84,3 +84,28 @@ async def regenerate_slide_script(svc: Services, deck_id: str, n: int, instructi
     sentences = clean_sentences(None, text)
     await save_slide_script(svc, deck_id, n, sentences, model=model)
     return sentences
+
+
+async def rewrite_all(svc: Services, deck_id: str, tone: str, length: str, instruction: str = "") -> None:
+    """Rewrite every slide's script with a new tone/length (sequential: Groq free tier), then re-voice what changed."""
+    from ..tts.pregen import pregenerate_deck_audio
+
+    store = svc.store
+    slides = store.slides(deck_id)
+    store.update_meta(deck_id, tone=tone, length=length, rewrite={"done": 0, "total": len(slides), "running": True, "error": None})
+    try:
+        for k, sl in enumerate(slides, start=1):
+            if not store.alive(deck_id):
+                return
+            await regenerate_slide_script(svc, deck_id, sl["n"], instruction, tone, length)
+            store.update_meta(deck_id, rewrite={"done": k, "total": len(slides), "running": True, "error": None})
+        store.update_meta(deck_id, rewrite={"done": len(slides), "total": len(slides), "running": False, "error": None})
+    except Exception as e:
+        log.warning("rewrite-all failed: %s", e)
+        m = store.meta(deck_id).get("rewrite", {})
+        store.update_meta(deck_id, rewrite={**m, "running": False, "error": str(e)[:200]})
+        return
+    try:
+        await pregenerate_deck_audio(svc, deck_id)
+    except Exception as e:
+        log.warning("audio after rewrite failed: %s", e)

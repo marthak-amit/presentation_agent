@@ -10,6 +10,8 @@ export default function Upload() {
   const [busy, setBusy] = useState(false);
   const [docMsg, setDocMsg] = useState("");
   const [drag, setDrag] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [delErr, setDelErr] = useState("");
   const [tone, setTone] = useState("conversational");
   const [length, setLength] = useState("standard");
   const timer = useRef<number | undefined>(undefined);
@@ -147,23 +149,40 @@ export default function Upload() {
       {decks.length > 0 && (
         <section>
           <h3>Previous decks</h3>
+          {delErr && <p className="error">{delErr}</p>}
           <ul className="decklist">
             {decks.map((d) => (
               <li key={d.deck_id}>
-                <span>{d.name}</span>
+                <span>{d.name || <i className="muted">(unnamed)</i>}{d.tone ? <span className="muted"> · {d.tone}, {d.length}</span> : null}</span>
                 <span className="muted">{d.status}</span>
                 <span className="row" style={{ margin: 0 }}>
                   {d.status === "ready" && <button onClick={() => nav(`/present/${d.deck_id}`)}>Present</button>}
                   {d.status === "ready" && <button onClick={() => nav(`/script/${d.deck_id}`)}>Script</button>}
-                  <button
-                    className="danger-ghost"
-                    title="Delete this deck"
-                    onClick={() => {
-                      if (window.confirm(`Delete "${d.name}" and its audio?`)) void api.deleteDeck(d.deck_id).then(refreshList);
-                    }}
-                  >
-                    🗑
-                  </button>
+                  {confirming === d.deck_id ? (
+                    <>
+                      <span className="muted">Delete?</span>
+                      <button
+                        className="danger"
+                        data-testid={`confirm-delete-${d.deck_id}`}
+                        onClick={() => {
+                          setConfirming(null);
+                          setDelErr("");
+                          api
+                            .deleteDeck(d.deck_id)
+                            .then(() => setDecks((list) => list.filter((x) => x.deck_id !== d.deck_id)))
+                            .catch((e) => setDelErr(`Could not delete: ${String(e)}`))
+                            .finally(() => void refreshList());
+                        }}
+                      >
+                        Yes
+                      </button>
+                      <button onClick={() => setConfirming(null)}>No</button>
+                    </>
+                  ) : (
+                    <button className="danger-ghost" title="Delete this deck" data-testid={`delete-${d.deck_id}`} onClick={() => setConfirming(d.deck_id)}>
+                      🗑
+                    </button>
+                  )}
                 </span>
               </li>
             ))}
