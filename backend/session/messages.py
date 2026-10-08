@@ -59,12 +59,18 @@ class SimTranscript(_Msg):
     speech_final: bool = False
 
 
+class Ask(_Msg):
+    """A typed / clicked question (suggestion chip, text box): same flow as a spoken one, no microphone needed."""
+    type: Literal["ask"] = "ask"
+    text: str
+
+
 class Ping(_Msg):
     type: Literal["ping"] = "ping"
 
 
 ClientMessage = Annotated[
-    Union[StartSession, Control, HandRaise, SetBargeIn, Ptt, AudioEnded, SimTranscript, Ping],
+    Union[StartSession, Control, HandRaise, SetBargeIn, Ptt, AudioEnded, SimTranscript, Ask, Ping],
     Field(discriminator="type"),
 ]
 _client_adapter = TypeAdapter(ClientMessage)
@@ -192,6 +198,19 @@ class ModelInfo(_Msg):
     total_ms: float | None = None
     fallback_used: bool = False
     question: str = ""
+
+
+class Source(_Msg):
+    kind: Literal["slide", "doc"]
+    slide_n: int | None = None
+    name: str = ""
+
+
+class AnswerStart(_Msg):
+    """Sent as soon as retrieval is done: what was asked and which material the answer is grounded in."""
+    type: Literal["answer_start"] = "answer_start"
+    question: str
+    sources: list[Source] = Field(default_factory=list)
 
 
 class VoiceCommand(_Msg):

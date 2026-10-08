@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, DeckInfo } from "../api";
 import { PresenterClient } from "../session/client";
 import SlideCursor from "../components/SlideCursor";
+import Orb, { ORB_LABEL, OrbMode } from "../components/Orb";
 
 export default function Presenter() {
   const { deckId = "" } = useParams();
@@ -13,6 +14,11 @@ export default function Presenter() {
   const rootRef = useRef<HTMLElement>(null);
   const [full, setFull] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [count, setCount] = useState<number | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [askText, setAskText] = useState("");
+  const [talkSecs, setTalkSecs] = useState(0);
+  const [showResult, setShowResult] = useState(false);
   const client = useMemo(() => new PresenterClient(deckId), [deckId]);
   const snap = useSyncExternalStore(
     (cb) => client.subscribe(cb),
@@ -22,6 +28,13 @@ export default function Presenter() {
   useEffect(() => {
     api.getDeck(deckId).then(setDeck).catch((e) => setErr(String(e)));
   }, [deckId]);
+  useEffect(() => {
+    fetch(`/decks/${deckId}/suggestions`)
+      .then((r) => (r.ok ? r.json() : { questions: [] }))
+      .then((j) => setSuggestions((j.questions as string[]) ?? []))
+      .catch(() => undefined);
+  }, [deckId]);
+
   useEffect(() => {
     client.connect();
     return () => client.close();
@@ -42,6 +55,34 @@ export default function Presenter() {
     return () => window.clearInterval(t);
   }, [snap.startedAt]);
 
+  // freeze the talk time when the deck ends (stats card); keep the Q&A card up a few seconds after an answer
+  useEffect(() => {
+    if (snap.state === "END" || snap.state === "OPEN_QA") setTalkSecs((t) => t || elapsed);
+    if (snap.state === "IDLE") setTalkSecs(0);
+  }, [snap.state]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (snap.answerStats.length === 0) return;
+    setShowResult(true);
+    const t = window.setTimeout(() => setShowResult(false), 7000);
+    return () => window.clearTimeout(t);
+  }, [snap.answerStats.length]);
+
+  // 3-2-1 before the first word: dramatic, and the click that started it unlocks browser audio
+  const startShow = useCallback(async () => {
+    if (count !== null) return;
+    await client.unlockAudio();
+    setCount(3);
+    let n = 3;
+    const t = window.setInterval(() => {
+      n -= 1;
+      if (n <= 0) {
+        window.clearInterval(t);
+        setCount(null);
+        void client.start();
+      } else setCount(n);
+    }, 800);
+  }, [client, count]);
+
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void rootRef.current?.requestFullscreen?.();
@@ -57,7 +98,7 @@ export default function Presenter() {
       switch (e.key) {
         case " ":
           e.preventDefault();
-          if (st === "IDLE") void client.start();
+          if (st === "IDLE") void startShow();
           else if (st === "PRESENTING") client.control("pause");
           else if (st === "PAUSED" || st === "LISTENING") client.control("resume");
           break;
@@ -106,7 +147,7 @@ export default function Presenter() {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [client, toggleFullscreen]);
+  }, [client, toggleFullscreen, startShow]);
 
   if (err) return <main className="page error">{err}</main>;
   if (!deck) return <main className="page">Loading…</main>;
@@ -119,6 +160,10 @@ export default function Presenter() {
   const ended = snap.state === "END" || snap.state === "OPEN_QA";
   const listening = snap.state === "LISTENING" || (paused && snap.reason !== "user");
   const answering = snap.state === "ANSWERING";
+  const orbMode: OrbMode = listening ? "listening" : snap.speaking ? "speaking" : answering ? "thinking" : "idle";
+  const lastStat = snap.answerStats[snap.answerStats.length - 1];
+  const srcLabel = (x: { kind: string; slide_n: number | null; name: string }) => (x.kind === "doc" ? x.name : `Slide ${x.slide_n}`);
+  const avgFirst = snap.answerStats.filter((a) => a.firstAudioMs).reduce((a, b, _, arr) => a + (b.firstAudioMs ?? 0) / arr.length, 0);
 
   return (
     <main ref={rootRef} className={`page presenter-root${full ? " full" : ""}`} data-state={snap.state}>
@@ -164,6 +209,41 @@ export default function Presenter() {
       <div className="stage">
         <img ref={imgRef} className="slide" src={slide.image_url} alt={slide.title} data-testid="slide-img" />
         <SlideCursor imgRef={imgRef} pointer={snap.pointer} visible={!idle && !ended} />
+        {!idle && !listening && !answering && (
+          <div className="stage-brand" data-testid="brand">
+            {snap.presenter ? `${snap.presenter} · AI presenter` : "AI presenter"}
+          </div>
+        )}
+        {count !== null && (
+          <div className="countdown" data-testid="countdown">
+            <span key={count}>{count}</span>
+          </div>
+        )}
+        {(answering || showResult) && snap.question && (
+          <div className="qa-card" data-testid="qa-card">
+            <div className="q">❓ {snap.question}</div>
+            <div className="src">
+              {snap.sources.length > 0 && <>Based on:</>}
+              {snap.sources.map((x, i) => (
+                <button key={i} className="chip-src" style={{ border: "none", cursor: x.kind === "slide" ? "pointer" : "default" }}
+                  onClick={() => x.kind === "slide" && x.slide_n && client.goto(x.slide_n)}>
+                  {srcLabel(x)}
+                </button>
+              ))}
+              {!answering && lastStat && (
+                <span className="chip-stat" data-testid="stat-chip">
+                  ⚡ first word {lastStat.firstAudioMs ? (lastStat.firstAudioMs / 1000).toFixed(1) : "–"} s · answered in {lastStat.totalMs ? (lastStat.totalMs / 1000).toFixed(1) : "–"} s{lastStat.fallback ? " · fallback model" : ""}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+        {!idle && (
+          <div className="stage-orb">
+            <Orb mode={orbMode} levels={() => client.levels()} size={full ? 110 : 76} />
+            <div className="lbl">{ORB_LABEL[orbMode]}</div>
+          </div>
+        )}
         {listening && (
           <div className="listening" data-testid="listening">
             <span className="pulse" /> Listening… ask your question
@@ -174,7 +254,13 @@ export default function Presenter() {
         {ended && (
           <div className="overlay" data-testid="end-screen">
             <h2>{snap.state === "OPEN_QA" ? "Open Q&A" : "That's the end"}</h2>
-            <p className="muted">Say “Okay Agent” and ask your question (or use the simulate box).</p>
+            <div className="stats" data-testid="end-stats">
+              <div className="stat"><b>{deck.slides.length}</b><span>slides presented</span></div>
+              <div className="stat"><b>{String(Math.floor(talkSecs / 60)).padStart(2, "0")}:{String(talkSecs % 60).padStart(2, "0")}</b><span>talk time</span></div>
+              <div className="stat"><b>{snap.questions.length}</b><span>audience questions</span></div>
+              <div className="stat"><b>{snap.answerStats.length ? `${avgFirst ? (avgFirst / 1000).toFixed(1) : "–"} s` : "–"}</b><span>avg time to first word</span></div>
+            </div>
+            <p className="muted">Say “Okay Agent” and ask your question, or type it below.</p>
             <h3>Questions asked ({snap.questions.length})</h3>
             <ol>{snap.questions.map((q, i) => <li key={i}>{q.question}</li>)}</ol>
             <h3>Unanswered — follow up ({snap.unanswered.length})</h3>
@@ -195,6 +281,30 @@ export default function Presenter() {
         {snap.transcript && <div className="muted mono">🎤 {snap.transcript}</div>}
       </div>
 
+      {!idle && (
+        <>
+          <form
+            className="askbar"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (askText.trim()) client.ask(askText.trim());
+              setAskText("");
+            }}
+          >
+            <input type="text" value={askText} onChange={(e) => setAskText(e.target.value)} placeholder="Type a question for the presenter and press Enter…" data-testid="ask-input" />
+            <button type="submit" className="primary" data-testid="ask-send">Ask</button>
+          </form>
+          {suggestions.length > 0 && (
+            <div className="suggest" data-testid="suggestions">
+              <span className="muted">Try asking:</span>
+              {suggestions.map((q) => (
+                <button key={q} onClick={() => client.ask(q)} title="Ask this question now">{q}</button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
       <div className="thumbs" data-testid="thumbs">
         {deck.slides.map((sl) => (
           <button key={sl.n} className={`thumb${sl.n === slide.n ? " cur" : ""}`} onClick={() => client.goto(sl.n)} title={`${sl.n}. ${sl.title}`}>
@@ -206,7 +316,7 @@ export default function Presenter() {
 
       <div className="row controls">
         {idle ? (
-          <button className="primary" onClick={() => void client.start()} disabled={!snap.ready} data-testid="start">▶ Start presenting</button>
+          <button className="primary" onClick={() => void startShow()} disabled={!snap.ready || count !== null} data-testid="start">▶ Start presenting</button>
         ) : (
           <>
             <button onClick={() => client.control("prev")} disabled={!(presenting || paused)}>⏮ Prev</button>

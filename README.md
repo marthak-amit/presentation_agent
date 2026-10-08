@@ -40,6 +40,8 @@ blocked it falls back to a built-in hashing embedder so nothing breaks).
 ## Features at a glance
 
 - **Setup check** (`/check`): real requests verify every key/model/tool, mic level meter, voice test. Run it before every demo.
+- **Dress rehearsal** (`/check`): one real question through the whole chain with timings - run it right before you present.
+- **On stage**: voice orb (idle/thinking/speaking/listening), question card with *Based on: Slide N* sources, type-or-click questions with suggested chips, 3-2-1 countdown, end-of-talk stats.
 - **Voice picker** (`/check` → *Choose your voice*): test any voice in your ElevenLabs account and switch with one click (no `.env` editing, no restart).
 - **Script editor** (`/script/{deck}`): edit what will be said per slide, or ask the AI to rewrite it ("shorter", "more casual", "mention the pilot"). Only changed sentences are re-voiced; the Q&A index and slide highlighter follow. Tone (conversational / formal / energetic / storytelling) and length are chosen at upload.
 - **Live reading highlighter + mouse arrow** follow the line being spoken, in narration and in answers.

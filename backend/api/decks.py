@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from ..ingest.docs import ALLOWED, extract_text
 from ..ingest.pipeline import run_ingest
+from ..ingest.suggest import suggest_questions
 from ..ingest.script import ScriptError, clean_sentences, regenerate_slide_script, rewrite_all, save_slide_script
 from ..llm.prompts import LENGTHS, TONES
 
@@ -241,3 +242,23 @@ async def rewrite_all_narration(deck_id: str, body: RewriteAll, request: Request
     svc.store.update_meta(deck_id, rewrite={"done": 0, "total": len(svc.store.slides(deck_id)), "running": True, "error": None})
     _background(request, rewrite_all(svc, deck_id, body.tone, body.length, body.instruction.strip()[:300]))
     return {"deck_id": deck_id, "status": "started"}
+
+
+@router.get("/decks/{deck_id}/suggestions")
+async def suggestions(deck_id: str, request: Request, refresh: bool = False):
+    """Likely audience questions (cached in suggestions.json). Used for click-to-ask chips."""
+    from ..ingest.store import read_json, write_json
+
+    svc = _svc(request)
+    if not svc.store.exists(deck_id):
+        raise HTTPException(404, "deck not found")
+    if svc.store.meta(deck_id).get("status") != "ready":
+        raise HTTPException(409, "deck is still processing")
+    path = svc.store.dir(deck_id) / "suggestions.json"
+    cached = read_json(path, None)
+    if cached and not refresh:
+        return {"questions": cached}
+    qs = await suggest_questions(svc, deck_id)
+    if svc.store.alive(deck_id):
+        write_json(path, qs)
+    return {"questions": qs}

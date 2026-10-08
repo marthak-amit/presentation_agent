@@ -269,3 +269,92 @@ async def voice_sample(request: Request, text: str = ""):
     return Response(audio, media_type="audio/mpeg",
                     headers={"X-TTS-Provider": provider, "X-TTS-Error": err, "X-TTS-Primary": getattr(svc.tts, "primary_real", ""),
                              "Cache-Control": "no-store"})
+
+
+# --------------------------------------------------------------------------- dress rehearsal
+class _SelfTestToolbox:
+    def __init__(self, svc, deck_id: str):
+        self.svc, self.deck_id = svc, deck_id
+
+    async def run(self, name: str, args: dict) -> str:
+        from ..rag.store import format_context
+
+        if name == "search_kb":
+            chunks = await asyncio.to_thread(self.svc.kb.search, self.deck_id, str(args.get("query", "")), 3)
+            return format_context(chunks, 1000) or "No relevant results."
+        if name == "goto_slide":
+            return f"Showing slide {args.get('n')}."
+        return "OK."
+
+
+@router.post("/selftest")
+async def selftest(request: Request, deck_id: str = ""):
+    """Dress rehearsal: one real question through retrieval -> LLM -> first sentence -> TTS, with timings.
+    Proves the keys, models and voice work together and shows the response time the audience will experience."""
+    from ..llm.prompts import qa_messages
+    from ..llm.qa import Failed, Filler, Finished, ModelSwitch, QAEngine, Text
+    from ..rag.store import format_context
+    from ..session.sentences_stream import SentenceStreamer
+
+    svc = request.app.state.svc
+    ready = [d for d in svc.store.list_ids() if svc.store.meta(d).get("status") == "ready"]
+    if deck_id and deck_id not in ready:
+        raise HTTPException(404, "deck not found or not ready")
+    deck_id = deck_id or (ready[0] if ready else "")
+    if not deck_id:
+        raise HTTPException(400, "Upload a deck first - the rehearsal asks a question about it")
+    s = svc.settings
+    from ..ingest.store import read_json
+
+    sug = read_json(svc.store.dir(deck_id) / "suggestions.json", None) or []
+    question = sug[0] if sug else "What is this presentation about?"
+    out: dict = {"deck_id": deck_id, "question": question, "llm": svc.llm.name, "notes": []}
+
+    t0 = time.monotonic()
+    chunks = await asyncio.to_thread(svc.kb.search, deck_id, question, 3)
+    out["retrieval_ms"] = int((time.monotonic() - t0) * 1000)
+    msgs = qa_messages(s.presenter_name, question, format_context(chunks), [], "")
+    engine = QAEngine(svc.llm, s)
+    streamer, first_sentence, text, fin, failed = SentenceStreamer(), None, "", None, None
+    t_llm = time.monotonic()
+    async for ev in engine.answer(msgs, _SelfTestToolbox(svc, deck_id), t0=t_llm):
+        if isinstance(ev, Text):
+            text += ev.text
+            if first_sentence is None:
+                got = streamer.feed(ev.text)
+                if got:
+                    first_sentence = got[0]
+                    out["first_sentence_ms"] = int((time.monotonic() - t_llm) * 1000)
+        elif isinstance(ev, Filler):
+            out["notes"].append("The LLM was slow enough that the 'give me a second' filler would have played.")
+        elif isinstance(ev, ModelSwitch):
+            out["notes"].append(f"Switched to the fallback model ({ev.model}): {ev.reason}")
+        elif isinstance(ev, Finished):
+            fin = ev
+        elif isinstance(ev, Failed):
+            failed = ev
+    out["total_llm_ms"] = int((time.monotonic() - t_llm) * 1000)
+    if failed or not text.strip():
+        out.update(ok=False, verdict="fail", answer="", model="",
+                   error="Every model failed - the audience would hear the canned 'I'll follow up' clip. Check the Groq line above.")
+        return out
+    first_sentence = first_sentence or (streamer.flush() or [text.strip()])[0]
+    out.setdefault("first_sentence_ms", out["total_llm_ms"])  # one-sentence answer: the sentence is complete at the end
+    out.update(answer=text.strip(), model=fin.model if fin else "", first_token_ms=int(fin.first_token_ms or 0) if fin else None,
+               fallback_used=bool(fin and fin.fallback_used))
+    t1 = time.monotonic()
+    audio, provider = await svc.tts.synth(first_sentence)
+    out["tts_ms"] = int((time.monotonic() - t1) * 1000)
+    out["tts_provider"] = provider
+    out["tts_bytes"] = len(audio)
+    primary = getattr(svc.tts, "primary_real", "")
+    if primary and provider != primary:
+        out["notes"].append(f"The voice fell back to '{provider}' instead of {primary}: {getattr(svc.tts, 'last_error', '')}")
+    # what the audience waits for after the question ends: retrieval + model until the first sentence + speech synthesis
+    out["first_audio_ms"] = out["retrieval_ms"] + out.get("first_sentence_ms", out["total_llm_ms"]) + out["tts_ms"]
+    fa = out["first_audio_ms"]
+    out["verdict"] = "great" if fa <= 1500 else "ok" if fa <= 2500 else "slow"
+    out["ok"] = not out["notes"] or out["verdict"] != "slow"
+    if svc.llm.name == "fake" or provider == "fake":
+        out["notes"].append("Mock services in use (no keys): timings are not representative.")
+    return out

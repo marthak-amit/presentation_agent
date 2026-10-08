@@ -1,7 +1,7 @@
 import { PlaybackQueue, Pointer, QueueItem } from "../audio/playbackQueue";
 import { StreamingPlayer } from "../audio/streamingPlayer";
 import { startMic, MicHandle } from "../audio/mic";
-import { initialSnapshot, PState, ServerMsg, Snapshot } from "./types";
+import { initialSnapshot, PState, ServerMsg, Snapshot, SourceRef } from "./types";
 
 /** Owns the WebSocket, playback queue and mic for one presenter page. */
 export class PresenterClient {
@@ -19,13 +19,36 @@ export class PresenterClient {
   private pointerKey = 0;
   private noticeKey = 0;
   private noticeTimer = 0;
+  private micLevel = 0;
+  private speakTimer = 0;
 
   constructor(private deckId: string) {
     this.queue = new PlaybackQueue({
       onStart: (item, durationMs) => this.onItemStart(item, durationMs),
-      onEnd: (item, interrupted) => this.send({ type: "audio_ended", play_id: item.playId, interrupted }),
+      onEnd: (item, interrupted) => {
+        this.send({ type: "audio_ended", play_id: item.playId, interrupted });
+        window.clearTimeout(this.speakTimer);
+        this.speakTimer = window.setTimeout(() => {
+          if (this.queue.pending === 0) this.set({ speaking: false });
+        }, 350);
+      },
     });
     this.player = new StreamingPlayer(this.queue);
+  }
+
+  /** Live loudness (0..1) of what is being played and of the microphone - read every frame by the orb. */
+  levels(): { out: number; mic: number } {
+    this.micLevel *= 0.9;
+    return { out: this.queue.level(), mic: this.micLevel };
+  }
+
+  async unlockAudio(): Promise<void> {
+    await this.queue.unlock();
+  }
+
+  ask(text: string): void {
+    void this.queue.unlock();
+    this.send({ type: "ask", text });
   }
 
   subscribe(fn: () => void): () => void {
@@ -121,9 +144,14 @@ export class PresenterClient {
   async enableMic(): Promise<void> {
     if (this.mic) return;
     try {
-      this.mic = await startMic((pcm) => {
-        if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(pcm);
-      });
+      this.mic = await startMic(
+        (pcm) => {
+          if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(pcm);
+        },
+        (rms) => {
+          this.micLevel = Math.max(this.micLevel, rms);
+        },
+      );
       this.set({ micOn: true, micError: "" });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -144,7 +172,9 @@ export class PresenterClient {
 
   // ---- inbound
   private onItemStart(item: QueueItem, durationMs: number): void {
+    window.clearTimeout(this.speakTimer);
     const patch: Partial<Snapshot> = {
+      speaking: true,
       prevCaption: this.snap.caption,
       caption: item.text,
       captionKind: item.kind,
@@ -175,6 +205,7 @@ export class PresenterClient {
           services: m.services as Record<string, string>,
           bargeIn: m.barge_in as boolean,
           sessionId: m.session_id as string,
+          presenter: (m.presenter as string) ?? "",
         });
         if (this.wasPresenting) {
           this.wasPresenting = false;
@@ -192,7 +223,8 @@ export class PresenterClient {
           hand: state === "PAUSED" || state === "LISTENING" ? this.snap.hand : false,
         });
         if (state === "IDLE" || state === "LISTENING") this.set({ caption: "", prevCaption: "", captionKind: "", transcript: "" });
-        if (state === "IDLE") this.set({ pointer: null, startedAt: null });
+        if (state === "IDLE") this.set({ pointer: null, startedAt: null, answerStats: [], question: "", sources: [] });
+        if (state === "PRESENTING" && this.snap.question) this.set({ question: "", sources: [] });
         if (state === "PRESENTING" && this.snap.startedAt === null) this.set({ startedAt: Date.now() });
         break;
       }
@@ -227,8 +259,24 @@ export class PresenterClient {
       case "barge_in_hit":
         this.set({ hand: true });
         break;
+      case "answer_start":
+        this.set({ question: m.question as string, sources: (m.sources as SourceRef[]) ?? [] });
+        break;
       case "model_info":
         this.set({ lastModel: m.model as string, lastFirstAudioMs: (m.first_audio_ms as number | null) ?? null });
+        if (m.total_ms !== null && m.total_ms !== undefined)
+          this.set({
+            answerStats: [
+              ...this.snap.answerStats,
+              {
+                question: (m.question as string) ?? "",
+                model: m.model as string,
+                firstAudioMs: (m.first_audio_ms as number | null) ?? null,
+                totalMs: m.total_ms as number,
+                fallback: Boolean(m.fallback_used),
+              },
+            ],
+          });
         break;
       case "summary":
         this.set({

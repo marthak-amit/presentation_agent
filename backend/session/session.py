@@ -315,6 +315,8 @@ class PresenterSession:
             await self._on_ptt(msg.active)
         elif isinstance(msg, M.SimTranscript):
             await self._on_sim(msg)
+        elif isinstance(msg, M.Ask):
+            await self._on_ask(msg.text)
 
     async def on_audio(self, data: bytes) -> None:
         await self.stt.send_audio(data)
@@ -626,6 +628,28 @@ class PresenterSession:
         self.buf.capturing = True
         self._start_qa("interrupt", trigger="hand_raise")
 
+    async def _on_ask(self, text: str) -> None:
+        """A typed or clicked question: identical to a spoken one, minus the wake phrase and the microphone."""
+        text = " ".join(text.split())[:300]
+        if len(text) < 3 or self.plan is None:
+            return
+        st = self.state
+        if st == S.ANSWERING:
+            await self._send(M.ErrorMsg(message="One moment - I am still answering the previous question."))
+            return
+        if st in (S.IDLE, S.END):
+            await self._send(M.ErrorMsg(message="Start the presentation first, then ask your question."))
+            return
+        if st in (S.PRESENTING, S.PAUSED) and self._qa_task is None:
+            await self._send(M.BargeInHit(trigger="typed question", text=text, score=100.0, detect_ms=0.0, source="typed"))
+            if st == S.PRESENTING:
+                await self._pause("ask")
+            self.buf.reset()
+            self.buf.capturing = True
+            self._start_qa("interrupt", skip_go_ahead=True, trigger="typed")
+        if self._qa_task is not None:
+            self._qa_q.put_nowait(("question", text, time.monotonic()))
+
     async def _on_ptt(self, active: bool) -> None:
         if active:
             if self.state in (S.PRESENTING, S.PAUSED) and self._qa_task is None:
@@ -797,6 +821,14 @@ class PresenterSession:
         engine = QAEngine(self.svc.llm, self.cfg)
         chunks = await asyncio.to_thread(self.svc.kb.search, self.deck_id, question, 3)
         context = format_context(chunks)
+        sources, seen_src = [], set()
+        for ch in chunks:
+            key = ("doc", ch.doc_name) if ch.source == "doc" else ("slide", ch.slide_n)
+            if key in seen_src or (key[0] == "slide" and not ch.slide_n):
+                continue
+            seen_src.add(key)
+            sources.append(M.Source(kind=key[0], slide_n=ch.slide_n or None, name=ch.doc_name))
+        await self._send(M.AnswerStart(question=question, sources=sources))
         cur = self.playhead[0]
         hint = f"slide {cur}: {self.plan.title(cur)}"
         messages = qa_messages(self.cfg.presenter_name, question, context, self._history, hint)

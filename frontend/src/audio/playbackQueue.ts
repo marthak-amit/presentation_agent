@@ -40,6 +40,8 @@ type Handlers = {
 export class PlaybackQueue {
   private ctx: AudioContext;
   private gain: GainNode;
+  private analyser: AnalyserNode;
+  private levelBuf: Uint8Array<ArrayBuffer>;
   private queue: QueueItem[] = [];
   private busy = false;
   private current: { item: QueueItem; src: AudioBufferSourceNode | null; finish: (interrupted: boolean) => void } | null = null;
@@ -51,7 +53,19 @@ export class PlaybackQueue {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     this.ctx = new AC();
     this.gain = this.ctx.createGain();
-    this.gain.connect(this.ctx.destination);
+    this.analyser = this.ctx.createAnalyser();
+    this.analyser.fftSize = 512;
+    this.levelBuf = new Uint8Array(new ArrayBuffer(this.analyser.fftSize));
+    this.gain.connect(this.analyser);
+    this.analyser.connect(this.ctx.destination);
+  }
+
+  /** Current output loudness 0..1 (drives the voice orb). */
+  level(): number {
+    this.analyser.getByteTimeDomainData(this.levelBuf);
+    let peak = 0;
+    for (let i = 0; i < this.levelBuf.length; i++) peak = Math.max(peak, Math.abs(this.levelBuf[i] - 128));
+    return Math.min(1, peak / 70);
   }
 
   /** Must be called from a user gesture (Start button) to satisfy autoplay policy. */

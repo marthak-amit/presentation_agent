@@ -10,6 +10,19 @@ export interface ActivePointer {
   durationMs: number;
 }
 
+export interface SourceRef {
+  kind: "slide" | "doc";
+  slide_n: number | null;
+  name: string;
+}
+export interface AnswerStat {
+  question: string;
+  model: string;
+  firstAudioMs: number | null;
+  totalMs: number | null;
+  fallback: boolean;
+}
+
 export type PState = "IDLE" | "PRESENTING" | "PAUSED" | "LISTENING" | "ANSWERING" | "END" | "OPEN_QA";
 
 export interface ServerMsg {
@@ -39,6 +52,11 @@ export interface Snapshot {
   notice: { key: number; text: string } | null;
   sessionId: string;
   voiceProvider: string;
+  speaking: boolean;
+  presenter: string;
+  question: string;
+  sources: SourceRef[];
+  answerStats: AnswerStat[];
   startedAt: number | null;
   questions: { question: string; answer?: string; ts?: string }[];
   unanswered: { question: string; ts?: string }[];
@@ -69,6 +87,11 @@ export const initialSnapshot: Snapshot = {
   notice: null,
   sessionId: "",
   voiceProvider: "",
+  speaking: false,
+  presenter: "",
+  question: "",
+  sources: [],
+  answerStats: [],
   startedAt: null,
   questions: [],
   unanswered: [],

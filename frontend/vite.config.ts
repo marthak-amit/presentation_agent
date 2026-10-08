@@ -14,6 +14,7 @@ export default defineConfig({
       "/logs": backend,
       "/preflight": backend,
       "/voices": backend,
+      "/selftest": backend,
       "/health": backend,
       "/ws": { target: backend, ws: true },
     },

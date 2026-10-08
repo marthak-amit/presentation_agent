@@ -35,6 +35,23 @@ async function errorOf(r: Response): Promise<{ what: string; fix: string }> {
   }
 }
 
+interface Rehearsal {
+  ok: boolean;
+  verdict: "great" | "ok" | "slow" | "fail";
+  question: string;
+  answer: string;
+  model: string;
+  llm: string;
+  tts_provider?: string;
+  retrieval_ms?: number;
+  first_sentence_ms?: number;
+  tts_ms?: number;
+  first_audio_ms?: number;
+  total_llm_ms?: number;
+  notes: string[];
+  error?: string;
+}
+
 const ICON: Record<string, string> = { ok: "✅", warn: "⚠️", fail: "❌", mock: "🧪" };
 
 export default function Check() {
@@ -58,6 +75,9 @@ export default function Check() {
   const [vErr, setVErr] = useState<{ what: string; fix: string } | null>(null);
   const [vLoading, setVLoading] = useState(false);
   const [manualId, setManualId] = useState("");
+  const [reh, setReh] = useState<Rehearsal | null>(null);
+  const [rehBusy, setRehBusy] = useState(false);
+  const [rehErr, setRehErr] = useState("");
   const [switched, setSwitched] = useState("");
   const sttRef = useRef<{ ws: WebSocket; mic: MicHandle | null } | null>(null);
 
@@ -84,6 +104,21 @@ export default function Check() {
       sttRef.current?.ws.close();
     };
   }, [run]);
+
+  async function rehearse() {
+    setRehBusy(true);
+    setRehErr("");
+    setReh(null);
+    try {
+      const r = await fetch("/selftest", { method: "POST" });
+      if (!r.ok) throw new Error((await errorOf(r)).what);
+      setReh((await r.json()) as Rehearsal);
+    } catch (e) {
+      setRehErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRehBusy(false);
+    }
+  }
 
   async function loadVoices() {
     setVLoading(true);
@@ -278,6 +313,42 @@ export default function Check() {
           </div>
         ))}
         {!report && !err && <p className="muted">Running checks…</p>}
+      </section>
+
+      <section className="card" data-testid="rehearsal">
+        <h3>Dress rehearsal</h3>
+        <p className="muted">
+          Asks your newest deck one real question through the whole chain (search → Groq → voice) and measures how long the audience would wait for the first spoken word.
+          Do this right before you go on stage.
+        </p>
+        <div className="row">
+          <button className="primary" onClick={() => void rehearse()} disabled={rehBusy} data-testid="rehearse">{rehBusy ? "Rehearsing…" : "Run dress rehearsal"}</button>
+          {rehErr && <span className="error">{rehErr}</span>}
+        </div>
+        {reh && (
+          <div data-testid="rehearsal-result">
+            <p className={reh.verdict === "great" ? "good" : reh.verdict === "fail" || reh.verdict === "slow" ? "error" : "muted"}>
+              {reh.verdict === "fail" ? `❌ ${reh.error}` : `${reh.verdict === "great" ? "✅ Great" : reh.verdict === "ok" ? "👍 Fine" : "⚠ Slow"}: first spoken word about ${((reh.first_audio_ms ?? 0) / 1000).toFixed(1)} s after the question ends (target ≤ 1.5 s).`}
+            </p>
+            {reh.verdict !== "fail" && (
+              <>
+                {[
+                  ["Search", reh.retrieval_ms ?? 0, "#6ea8ff"],
+                  ["AI (to first sentence)", reh.first_sentence_ms ?? 0, "#a07bff"],
+                  ["Voice (first sentence)", reh.tts_ms ?? 0, "#5fd38d"],
+                ].map(([label, ms, color]) => (
+                  <div key={label as string} style={{ margin: "6px 0" }}>
+                    <div className="muted">{label as string}: {ms as number} ms</div>
+                    <div className="rehearsal-bar"><div style={{ width: `${Math.min(100, ((ms as number) / 2500) * 100)}%`, background: color as string }} /></div>
+                  </div>
+                ))}
+                <p className="muted"><b>Q:</b> {reh.question}<br /><b>A:</b> {reh.answer}</p>
+                <p className="muted">model {reh.model || "?"} · voice {reh.tts_provider}</p>
+              </>
+            )}
+            {reh.notes.map((n) => <p key={n} className="fix">→ {n}</p>)}
+          </div>
+        )}
       </section>
 
       <section className="card" data-testid="voice-picker">
