@@ -21,8 +21,21 @@ from .tts.pregen import pregenerate_deck_audio
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
+def _git_version() -> str:
+    try:
+        import subprocess
+
+        from .config import ROOT
+
+        return subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                              timeout=3).stdout.strip()
+    except Exception:
+        return ""
+
+
 def create_app(svc: Services | None = None) -> FastAPI:
     svc = svc or build_services()
+    VERSION = _git_version()  # which commit this server process was started from
     if pregenerate_deck_audio not in pipeline.POST_HOOKS:
         pipeline.POST_HOOKS.append(pregenerate_deck_audio)
 
@@ -72,7 +85,7 @@ def create_app(svc: Services | None = None) -> FastAPI:
     @app.get("/health")
     async def health():
         s = svc.settings
-        return {"ok": True, "presenter": s.presenter_name,
+        return {"ok": True, "presenter": s.presenter_name, "version": VERSION, "started_at": svc.started_at,
                 "services": {"llm": svc.llm.name, "stt": "deepgram" if s.use_real_stt else "fake",
                              "tts": svc.tts.primary_name, "embeddings": svc.kb.embedder.name if svc._kb else "lazy"}}
 

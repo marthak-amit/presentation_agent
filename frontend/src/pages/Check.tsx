@@ -39,6 +39,7 @@ const ICON: Record<string, string> = { ok: "✅", warn: "⚠️", fail: "❌", m
 
 export default function Check() {
   const [report, setReport] = useState<Report | null>(null);
+  const [version, setVersion] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [level, setLevel] = useState(0);
@@ -64,6 +65,7 @@ export default function Check() {
     setLoading(true);
     setErr("");
     try {
+      void fetch("/health").then((h) => h.json()).then((j) => setVersion(j.version ?? "")).catch(() => undefined);
       const r = await fetch("/preflight");
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setReport((await r.json()) as Report);
@@ -248,6 +250,7 @@ export default function Check() {
       <p className="muted">
         Verifies keys, models and tools with real requests, so you find problems before the demo.
         {report && <> Presenter name: <b>{report.presenter}</b>.</>}
+        {version && <> Backend code version: <b className="mono" data-testid="version">{version}</b> (should match <span className="mono">git log -1 --oneline</span>; if not, an old server is running - <span className="mono">make stop</span> then <span className="mono">make dev</span>).</>}
       </p>
       <div className="row">
         <button className="primary" onClick={() => void run()} disabled={loading} data-testid="recheck">

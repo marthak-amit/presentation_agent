@@ -49,7 +49,16 @@ export const api = {
     fd.append("file", file);
     fd.append("tone", tone);
     fd.append("length", length);
-    return j(await fetch("/decks", { method: "POST", body: fd }));
+    const ctl = new AbortController();
+    const t = window.setTimeout(() => ctl.abort(), 120_000); // never sit on "Uploading…" forever
+    try {
+      return await j<{ deck_id: string }>(await fetch("/decks", { method: "POST", body: fd, signal: ctl.signal }));
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") throw new Error("The backend did not answer the upload within 2 minutes - is an old server running? Try: make stop, then make dev");
+      throw e;
+    } finally {
+      window.clearTimeout(t);
+    }
   },
   async addDocs(deckId: string, files: File[]): Promise<{ chunks: number }> {
     const fd = new FormData();

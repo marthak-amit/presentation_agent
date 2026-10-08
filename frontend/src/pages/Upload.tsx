@@ -15,9 +15,13 @@ export default function Upload() {
   const [tone, setTone] = useState("conversational");
   const [length, setLength] = useState("standard");
   const timer = useRef<number | undefined>(undefined);
+  const [backendDown, setBackendDown] = useState(false);
 
   const refreshList = useCallback(() => api.listDecks().then(setDecks).catch(() => undefined), []);
   useEffect(() => {
+    fetch("/health")
+      .then((r) => setBackendDown(!r.ok))
+      .catch(() => setBackendDown(true));
     void refreshList();
     return () => window.clearTimeout(timer.current);
   }, [refreshList]);
@@ -43,6 +47,7 @@ export default function Upload() {
     setBusy(true);
     try {
       const { deck_id } = await api.uploadDeck(f, tone, length);
+      setBackendDown(false);
       await poll(deck_id);
     } catch (e) {
       setError(String(e));
@@ -106,6 +111,12 @@ export default function Upload() {
         <input type="file" accept=".pptx" hidden onChange={(e) => void onFile(e.target.files?.[0])} data-testid="deck-input" />
         {busy ? "Uploading…" : "Drop a .pptx here or click to choose"}
       </label>
+      {backendDown && (
+        <p className="warn" data-testid="backend-down">
+          ⚠ The backend (port 8000) is not answering. In the terminal press Ctrl-C, run <code>make stop</code> and then <code>make dev</code>
+          (an old server still holding the port is the usual cause of "Address already in use").
+        </p>
+      )}
       {error && <p className="error">{error}</p>}
 
       {deck && (
