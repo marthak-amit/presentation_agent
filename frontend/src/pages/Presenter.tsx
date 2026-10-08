@@ -153,7 +153,10 @@ export default function Presenter() {
       {snap.warnings.length > 0 && (
         <div className="warn" data-testid="warnings">
           {snap.warnings.map((w) => (
-            <div key={w}>⚠ {w}</div>
+            <div key={w}>
+              ⚠ {w}{" "}
+              {/voice|TTS/i.test(w) && <Link to="/check" target="_blank">Fix voice →</Link>}
+            </div>
           ))}
         </div>
       )}
