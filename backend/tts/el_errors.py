@@ -20,8 +20,9 @@ def explain(code: int, status: str, message: str) -> tuple[str, str]:
     s = f"{status} {message}".lower()
     if code == 402 or "paid_plan_required" in s or "payment_required" in s or "library voice" in s:
         return ("ElevenLabs refuses this voice through the API: it is a Voice Library voice and your plan cannot use library voices via the API",
-                "Use a voice from YOUR account instead: a default/premade voice, or clone your own voice (Voices → Add a new voice). "
-                "Or upgrade the ElevenLabs plan. Then put that voice's ID in ELEVENLABS_VOICE_ID and restart")
+                "Use a voice from YOUR account instead: a premade voice (click 'Load my voices' above and Test the premade ones), "
+                "a voice you create with Voices → Voice Design (describe the accent you want), or clone your own voice. "
+                "Voice IDs copied from the public Voice Library are all refused on a free plan. Or upgrade the ElevenLabs plan")
     if "quota" in s or "credit" in s:
         return ("ElevenLabs character quota / credits used up", "Top up or wait for the monthly reset at elevenlabs.io, or use a different account's key")
     if code == 401 and "permission" in s:
